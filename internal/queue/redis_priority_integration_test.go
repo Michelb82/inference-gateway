@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mywebsite/construction-ai-gateway/internal/cloudevent"
 	"github.com/mywebsite/construction-ai-gateway/internal/queue"
 	"github.com/redis/go-redis/v9"
 )
@@ -45,22 +46,25 @@ func TestPriorityConsumeAgainstLiveRedis(t *testing.T) {
 		t.Fatalf("Del() error = %v", err)
 	}
 
+	q := queue.NewRedisQueue(client, inputQueue, outputQueue, 2, 3, 3)
 	push := func(id, prio string) {
 		t.Helper()
 		payload := fmt.Sprintf(
 			`{"type":"t","source":"/integration","id":%q,"data":{"priority":%q}}`,
 			id, prio,
 		)
-		if err := client.LPush(ctx, "queue:"+inputQueue, payload).Err(); err != nil {
-			t.Fatalf("LPush(%s) error = %v", id, err)
+		event, err := cloudevent.FromJSON(payload)
+		if err != nil {
+			t.Fatalf("FromJSON(%s) error = %v", id, err)
+		}
+		if err := q.Enqueue(ctx, event); err != nil {
+			t.Fatalf("Enqueue(%s) error = %v", id, err)
 		}
 	}
 
 	push("low-1", "LOW")
 	push("high-1", "HIGH")
 	push("crit-1", "CRITICAL")
-
-	q := queue.NewRedisQueue(client, inputQueue, outputQueue, 2, 3, 3)
 
 	first, err := q.Consume(ctx)
 	if err != nil {

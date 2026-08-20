@@ -151,3 +151,17 @@ func TestHealthHTMLIncludesTranslate(t *testing.T) {
 		t.Fatalf("missing unavailable status")
 	}
 }
+
+func TestHealthMethodNotAllowed(t *testing.T) {
+	handler := health.NewHandler(capability.NewHolder(), &fakeModels{})
+	mux := http.NewServeMux()
+	handler.Register(mux)
+
+	for _, path := range []string{"/health", "/health.json"} {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, path, nil))
+		if rec.Code != http.StatusMethodNotAllowed {
+			t.Fatalf("%s status = %d", path, rec.Code)
+		}
+	}
+}

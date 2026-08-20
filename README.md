@@ -1,32 +1,54 @@
 # Construction AI Gateway
 
-Standalone Go service that exposes AI capabilities over Redis CloudEvents and keeps Ollama model details inside the gateway.
+Standalone Go service that exposes AI capabilities over an OpenAI-compatible HTTP API and keeps Ollama model details inside the gateway.
 
 ## Architecture
 
-- Input queue: `queue:ai.requests` (producers still `LPUSH` here)
-- Internal priority lanes: `queue:ai.requests:critical|high|medium|low`
-- Output queue: `queue:ai.responses`
+- External ingestion: OpenAI Chat Completions over HTTP (`POST /v1/chat/completions`, `GET /v1/models`)
+- Internal work queue (Redis): `queue:ai.requests` plus priority lanes `queue:ai.requests:critical|high|medium|low`
+- Internal responses: `queue:ai.responses` and per-request `queue:ai.responses:{id}`
 - Built-in capabilities (gateway code): `routing`, `intent-classification`, `translate`
 - Health: `GET /health` (HTML), `GET /health.json` (JSON) on port 80
 - Docker network: `dev` (external)
 
-Applications request a **capability**. The gateway maps that capability to a configured LLM endpoint and (quantized) model and never accepts caller-supplied model names.
+Applications request a **capability** via the OpenAI `model` field. The gateway maps that capability to a configured LLM endpoint and (quantized) model and never accepts caller-supplied LLM names.
 
-Optional `data.priority` on each request selects a processing lane: `CRITICAL`, `HIGH`, `MEDIUM`, or `LOW` (case-insensitive). Missing or invalid values default to `LOW`. The gateway demuxes the input list into Redis lanes and schedules work with fairness counters (see Configuration).
+Callers never talk to Redis. They use an OpenAI-compatible client against this HTTP API:
+
+```text
+Consumer
+   │
+   ▼
+POST /v1/chat/completions   (model = capability id)
+   │
+   ▼
+Gateway HTTP adapter  →  internal CloudEvent  →  Redis work queue
+   │                                              (priority lanes)
+   │                                                      │
+   │                                              Worker + Ollama
+   │                                                      │
+   ◄──────── wait on queue:ai.responses:{id} ◄────────────┘
+   │
+   ▼
+OpenAI chat.completion
+```
+
+The HTTP call is synchronous: the handler enqueues an internal CloudEvent, the worker processes it with priority fairness, and the handler waits for the correlated response. The producer contract is [docs/openai-http-ingestion.md](docs/openai-http-ingestion.md).
+
+Optional extra field `priority` on each request selects a processing lane: `CRITICAL`, `HIGH`, `MEDIUM`, or `LOW` (case-insensitive). Missing or invalid values default to `LOW`. The gateway demuxes the internal input list into Redis lanes and schedules work with fairness counters (see Configuration).
 
 ### Configuration management
 
-Runtime configuration (models, capability→model bindings, input character limits, Redis ingress, CloudEvent prefix, priority fairness) comes from a **manifest**, not from `.env`. The manifest is an ops/bindings document: capability prompts, I/O shapes, and parsers live in gateway code (`internal/capability`). `capability_models` must bind exactly the built-in capability ids.
+Runtime configuration (models, capability→model bindings, input character limits, Redis **internal** queue, CloudEvent prefix, priority fairness) comes from a **manifest**, not from `.env`. The manifest is an ops/bindings document: capability prompts, I/O shapes, and parsers live in gateway code (`internal/capability`). `capability_models` must bind exactly the built-in capability ids.
 
-- **Primary path:** poll `MANIFEST_URL` every `MANIFEST_POLLING_INTERVAL`. Until a valid manifest is applied, the gateway stays **dormant** (process up, health reports `dormant`, no Redis consumer / capability work).
+- **Primary path:** poll `MANIFEST_URL` every `MANIFEST_POLLING_INTERVAL`. Until a valid manifest is applied, the gateway stays **dormant** (process up, health reports `dormant`, OpenAI endpoints return 503, no Redis consumer / capability work).
 - **Optional local file:** `--manifest /path/to/manifest.json` is for development, tests, or experimental setups only. It is **not** required to boot. If the flag is set, the file must be valid or startup exits.
 - **Soft failure:** if the manager is unavailable or returns an invalid document, the gateway keeps the current snapshot (or remains dormant). A failed poll never clears a working configuration.
 - On a successful apply, the gateway activates (or updates) the data plane using **rank 0** model bindings from `capability_models`. Ranked fallbacks are reserved for later.
 
 Compose for local/dev mounts `manifest.json` and passes `--manifest` so the stack works without AI Manager. Production-oriented runs can omit that flag and wait for the manager.
 
-For planned control-plane / data-plane separation, pluggable ingestion adapters, and the AI Gateway Manager, see [docs/future-architecture.md](docs/future-architecture.md).
+For planned control-plane / data-plane separation (Ingress, Orchestration, Policy, Service Manager), see [docs/future-architecture.md](docs/future-architecture.md). That document also describes how this gateway’s OpenAI HTTP producer contract relates to those later layers. Redis remains an internal work queue, not a future producer adapter.
 
 ## Prerequisites
 
@@ -49,7 +71,7 @@ cp manifest.json.dist manifest.json
 docker compose up --build
 ```
 
-Health endpoints are published on host port `18080` by default (`http://localhost:18080/health` and `/health.json`).
+Health and OpenAI endpoints are published on host port `18080` by default (`http://localhost:18080/health`, `/health.json`, `/v1/models`, `/v1/chat/completions`).
 
 ## Configuration
 
@@ -73,8 +95,8 @@ Copy `manifest.json.dist` to `manifest.json` for local/dev. Public defaults use 
 |-------|---------|
 | `models` | Catalog entries with `id`, `url`, `model` (Ollama name), `keep_alive_seconds` |
 | `capability_models` | Bindings for each built-in capability (`routing`, `intent-classification`, `translate`): ranked list of model `id`s (rank `0` is used today; higher ranks are reserved for failover). Optional `max_input_chars` on rank `0` (defaults: routing `200`, intent-classification `8000`, translate `16000`). Unknown capability keys are rejected. |
-| `ingress` | Redis adapter, address, ingress/egress channels, BRPOP timeout |
-| `config` | CloudEvent `message_prefix`, `http_address`, priority fairness counts, optional `max_system_prompt_chars` (default `4000`), optional `system_prompt_override_orgs` (default empty / deny all) |
+| `ingress` | Internal Redis work queue: adapter, address, ingress/egress channels, BRPOP timeout. Not the producer contract. |
+| `config` | Internal CloudEvent `message_prefix`, `http_address`, priority fairness counts, optional `max_system_prompt_chars` (default `4000`), optional `system_prompt_override_orgs` (default empty / deny all) |
 
 Example (trimmed):
 
@@ -112,7 +134,7 @@ Example (trimmed):
 }
 ```
 
-Request/completed/failed CloudEvent types are derived from `config.message_prefix` as `{prefix}.request`, `{prefix}.request.completed`, and `{prefix}.request.failed`.
+Internal request/completed/failed CloudEvent types are derived from `config.message_prefix` as `{prefix}.request`, `{prefix}.request.completed`, and `{prefix}.request.failed`.
 
 ### Priority fairness
 
@@ -133,94 +155,93 @@ With the defaults (`3` / `3`): every 3 HIGH → 1 MEDIUM; every 3 MEDIUM → 1 L
 
 ## Capability contract
 
-Request type: `{message_prefix}.request` (default `com.mywebsite.ai.request`)
+Callers use OpenAI Chat Completions. `model` is the capability id. Full contract: [docs/openai-http-ingestion.md](docs/openai-http-ingestion.md).
 
 ```json
 {
-  "type": "com.mywebsite.ai.request",
-  "source": "/some-service",
-  "id": "abc-123",
-  "organisation_id": "7",
-  "time": "2026-07-28T22:00:00+00:00",
-  "datacontenttype": "application/json",
-  "data": {
-    "capability": "intent-classification",
-    "priority": "HIGH",
-    "input": { "message": "I need my living room painted" }
-  }
+  "model": "intent-classification",
+  "messages": [
+    {"role": "user", "content": "I need my living room painted"}
+  ],
+  "priority": "HIGH"
 }
 ```
 
-| Capability | Input | Result shape |
-|------------|--------|--------------|
+| Capability | User content | Result JSON in `choices[0].message.content` |
+|------------|--------------|-----------------------------------------------|
 | `routing` | `message` | `{ "capability": "<next-capability>" }` |
 | `intent-classification` | `message` | `{ "intent": "...", "confidence": 0.0-1.0 }` |
-| `translate` | `text`, `source_locale`, `target_locale` | `{ "text": "..." }` |
+| `translate` | `text` (`source_locale` / `target_locale` extras) | `{ "text": "..." }` |
+
+Success: HTTP 200, `object` is `chat.completion`, `model` is the capability id (no Ollama name). `content` is a **JSON string** of the result.
+
+Failure: OpenAI `{ "error": { "message", "type", "param", "code" } }` with 4xx/5xx. Input over `max_input_chars` is `400` with a bounds message.
 
 ### Custom system prompt (`messages.role = system`)
 
-Optional `data.input.system_prompt` is **denied by default**. It is accepted only when:
+The first `system` message is **denied by default**. It is accepted only when:
 
-1. The CloudEvent `organisation_id` is listed in manifest `config.system_prompt_override_orgs`, and
+1. Header `X-Organisation-Id` is listed in manifest `config.system_prompt_override_orgs`, and
 2. The override length is within `config.max_system_prompt_chars` (default `4000` runes).
 
-Unauthorized or oversized overrides fail the request (`{prefix}.request.failed`). Empty allowlist means no organisation may override.
+Unauthorized or oversized overrides fail the HTTP request. Empty allowlist means no organisation may override.
 
 When an override is authorized:
 
 1. The built-in gateway system prompts are **not** used.
 2. The value is sent to the LLM as `messages[]` with `role: "system"` (alongside the user message/text as `role: "user"`).
-3. Result parsing is relaxed: the model’s JSON object is returned as `data.result` **as-is**, without enforcing the default capability result shapes above. Callers that override the system prompt own the response schema.
+3. Result parsing is relaxed: the model’s JSON object is returned as `content` **as-is**, without enforcing the default capability result shapes above. Callers that override the system prompt own the response schema.
 
 Example (organisation `7` must be in `system_prompt_override_orgs`):
 
 ```json
 {
-  "organisation_id": "7",
-  "data": {
-    "capability": "routing",
-    "input": {
-      "message": "{\"customer_request\":\"muren verven\",\"available_jobs\":[{\"id\":1,\"name\":\"Wall painting\"}]}",
-      "system_prompt": "You are a routing specialist. Respond with ONLY valid JSON matching your organisation schema."
+  "model": "routing",
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are a routing specialist. Respond with ONLY valid JSON matching your organisation schema."
+    },
+    {
+      "role": "user",
+      "content": "{\"customer_request\":\"muren verven\",\"available_jobs\":[{\"id\":1,\"name\":\"Wall painting\"}]}"
     }
-  }
+  ]
 }
 ```
 
-Without `system_prompt`, the gateway uses its default system prompts and validates the default result shapes in the table above.
+Without a system message, the gateway uses its default system prompts and validates the default result shapes in the table above.
 
 Translate example:
 
 ```json
 {
-  "data": {
-    "capability": "translate",
-    "input": {
-      "text": "Elektrische installaties voor woningen",
-      "source_locale": "nl",
-      "target_locale": "en"
-    }
-  }
+  "model": "translate",
+  "messages": [
+    {"role": "user", "content": "Elektrische installaties voor woningen"}
+  ],
+  "source_locale": "nl",
+  "target_locale": "en"
 }
 ```
 
-Success: `{prefix}.request.completed` with request `data` merged back in, plus `data.capability` and `data.result` (no `model` field). Gateway fields overwrite matching request keys.
+## HTTP endpoints
 
-Failure: `{prefix}.request.failed` with request `data` merged back in, plus `data.error` (and `data.capability` when known). Unavailable models are logged and returned this way. When input exceeds the per-capability character limit (`max_input_chars` on the rank-0 capability model binding), `data.error` is a structured object: `{"reason":"Prompt is outside bounds","max_characters":"<limit>"}`.
-
-## Health endpoints
-
-| Path | Format | Meaning |
+| Path | Method | Meaning |
 |------|--------|---------|
-| `/health` | HTML | Per-capability readiness page |
-| `/health.json` | JSON | Same data for probes/automation |
+| `/v1/chat/completions` | POST | OpenAI Chat Completions; `model` is a capability id |
+| `/v1/models` | GET | Lists capability ids (`routing`, `intent-classification`, `translate`) |
+| `/health` | GET | Per-capability readiness page (HTML) |
+| `/health.json` | GET | Same data for probes/automation (JSON) |
+
+While dormant (no manifest), `/v1/*` returns an OpenAI-shaped **503**. Health reports `dormant` with HTTP **503**.
 
 Status values:
 
 - Overall: `ready` / `not_ready` / `dormant` (awaiting manifest)
 - Per capability: `available` / `unavailable` (omitted while dormant)
 
-HTTP status is `200` when ready and `503` when not ready or dormant. Model names appear only on health endpoints (ops), not on successful queue responses.
+HTTP status is `200` when ready and `503` when not ready or dormant. Model names appear only on health endpoints (ops), not on successful OpenAI completions.
 
 ## Manual smoke test
 
@@ -232,10 +253,9 @@ chmod +x scripts/push-test-event.sh
 CAPABILITY=routing ./scripts/push-test-event.sh
 ```
 
-If your manifest overrides `message_prefix`, export the same value as `CLOUDEVENT_TYPE_PREFIX` (or `EVENT_TYPE`) when running the smoke script.
-
 ```bash
 curl -sS http://localhost:18080/health.json
+curl -sS http://localhost:18080/v1/models
 ```
 
 ## Tests

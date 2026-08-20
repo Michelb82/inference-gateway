@@ -132,13 +132,15 @@ Its responsibility is to accept requests from consumers and provide them to Orch
 
 Ingress may support different protocols or integration mechanisms without requiring changes to the downstream inference components.
 
+**Today**, until Ingress and Orchestration are separate services, consumers call the Inference Gateway directly using the OpenAI HTTP contract (`POST /v1/chat/completions`). That is the stable producer interface; additional ingress protocols belong in a later Ingress service, not as Redis LPUSH to the gateway.
+
 Conceptually:
 
 ```text
 Consumer
    │
    ▼
-Ingress Layer
+Ingress Layer   (today: OpenAI HTTP on the Inference Gateway)
    │
    ▼
 Orchestration
@@ -274,11 +276,13 @@ Its purpose is to hide inference-provider and runtime-specific implementation de
 
 The gateway is responsible for:
 
-* Capability resolution
+* OpenAI-compatible HTTP ingestion (`/v1/chat/completions`, `/v1/models`)
+* Capability resolution (`model` → built-in capability → configured runtime model)
 * Request validation
 * Inference request construction
 * Communication with inference runtimes
 * Provider abstraction
+* Priority scheduling (internal Redis work queue)
 * Inference-specific resilience
 * Response handling
 * Health reporting
@@ -469,35 +473,68 @@ The augmentation path is optional and may be invoked zero or more times dependin
 
 The Inference Gateway itself should remain independent from the transport used to communicate with it.
 
-The existing Redis CloudEvents implementation can therefore be treated as an **ingress adapter** rather than a fundamental dependency of the gateway.
+## Current producer contract (this repository)
 
-Future adapters may include:
+Producers call an **OpenAI-compatible HTTP API**. They do not `LPUSH` Redis.
 
-* Redis
+* `POST /v1/chat/completions` — `model` is a **capability** id (`routing`, `intent-classification`, `translate`), not an Ollama model name
+* `GET /v1/models` — lists those capability ids
+* The HTTP call is **synchronous**: the gateway maps the OpenAI body to an internal CloudEvent, enqueues it on Redis, the worker runs inference, and the handler waits on a per-request correlation key
+
+Redis CloudEvents are therefore an **internal work queue** (priority lanes, fairness scheduling, worker consume/publish). They are not the producer contract.
+
+The caller-facing contract is documented in [openai-http-ingestion.md](openai-http-ingestion.md).
+
+```text
+Consumer
+   │
+   ▼
+OpenAI HTTP  (POST /v1/chat/completions)
+   │
+   ▼
+Inference Gateway HTTP adapter
+   │
+   ▼
+Internal Redis CloudEvent queue
+   │
+   ▼
+Worker → Inference Runtime (Ollama OpenAI /v1/chat/completions)
+   │
+   ▼
+Correlated HTTP response  (chat.completion)
+```
+
+Until a separate Ingress / Orchestration service exists, consumers and Orchestration both speak this OpenAI HTTP API to the gateway.
+
+## Later adapters
+
+A future Ingress layer (in front of Orchestration) may accept additional consumer transports without changing the gateway’s inference path:
+
 * Kafka
-* HTTP
 * Other messaging systems
 * Other internal service protocols
 
 Conceptually:
 
 ```text
-                 Gateway Adapters
+                 Consumer transports (Ingress)
         ┌────────────┬────────────┬──────────┐
-        │   Redis    │   Kafka    │   HTTP   │
+        │ OpenAI HTTP│   Kafka    │  other   │
         └─────┬──────┴─────┬──────┴────┬─────┘
               │            │           │
               └────────────┼───────────┘
                            ▼
-                  Inference Gateway
+                    Orchestration
                            │
-                  Inference abstraction
+                           ▼
+                  Inference Gateway
+                  (OpenAI HTTP today)
                            │
                            ▼
                   Inference Runtime
 ```
 
-This keeps transport concerns separate from inference concerns.
+This keeps consumer transport concerns separate from inference concerns. Redis stays behind the gateway as a scheduling implementation detail.
 
 ---
 
@@ -596,9 +633,10 @@ The first version establishes the fundamental boundaries.
 
 The initial gateway provides:
 
+* OpenAI-compatible HTTP producer API (`POST /v1/chat/completions`, `GET /v1/models`)
 * Request processing
 * Authentication and validation
-* Priority scheduling
+* Priority scheduling (internal Redis lanes; not the producer contract)
 * Capability resolution
 * Prompt construction
 * Inference execution
@@ -607,6 +645,8 @@ The initial gateway provides:
 * Circuit breaking
 * Exponential backoff
 * Service registration
+
+Producers integrate with the gateway over HTTP. Redis CloudEvents remain an internal queue used to schedule and correlate work.
 
 ### Service Manager
 
@@ -644,9 +684,9 @@ Policy Service
 Inference Gateway
 ```
 
-The gateway's direct coupling to Redis is removed by introducing the ingestion adapter boundary.
+Producer coupling to Redis is already removed: callers use OpenAI HTTP. V2.x further separates Ingress and Orchestration from the gateway so Redis remains a gateway-internal work queue rather than a platform bus.
 
-Orchestration becomes responsible for coordinating the request while the Policy Service provides centralized policy decisions.
+Orchestration becomes responsible for coordinating the request while the Policy Service provides centralized policy decisions. Orchestration should call the gateway using the same OpenAI HTTP contract (`model` = capability).
 
 The Inference Gateway remains responsible for inference-specific processing.
 

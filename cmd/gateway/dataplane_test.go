@@ -58,7 +58,11 @@ func TestApplyEnsureModelsFailureLeavesLivePlaneUntouched(t *testing.T) {
 	if plane.redis == nil {
 		t.Fatal("redis client nil after first Apply")
 	}
+	if plane.InferenceQueue() == nil {
+		t.Fatal("inference queue nil after first Apply")
+	}
 	oldRedis := plane.redis
+	oldQueue := plane.queue
 	oldPrefix := cloudevent.EventTypeRequest
 
 	badSnap := testSnapshot(mr.Addr(), "http://127.0.0.1:1", "bad:latest", "fp-bad", "com.example.bad")
@@ -75,6 +79,9 @@ func TestApplyEnsureModelsFailureLeavesLivePlaneUntouched(t *testing.T) {
 	}
 	if plane.redis != oldRedis {
 		t.Fatal("redis client changed after failed Apply")
+	}
+	if plane.queue != oldQueue {
+		t.Fatal("inference queue changed after failed Apply")
 	}
 	if plane.snap == nil || plane.snap.Fingerprint != "fp-good" {
 		t.Fatalf("snap fingerprint = %#v, want fp-good", plane.snap)
@@ -116,6 +123,9 @@ func TestApplyAbortsWhenParentCancelled(t *testing.T) {
 	}
 	if holder.Ready() {
 		t.Fatal("registry should stay empty when Apply aborts before swap")
+	}
+	if plane.InferenceQueue() != nil {
+		t.Fatal("inference queue should stay nil when Apply aborts")
 	}
 }
 

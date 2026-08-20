@@ -19,6 +19,7 @@ import (
 	"github.com/mywebsite/construction-ai-gateway/internal/configmgmt"
 	"github.com/mywebsite/construction-ai-gateway/internal/health"
 	"github.com/mywebsite/construction-ai-gateway/internal/ollama"
+	"github.com/mywebsite/construction-ai-gateway/internal/openai"
 	"github.com/mywebsite/construction-ai-gateway/internal/queue"
 	"github.com/mywebsite/construction-ai-gateway/internal/worker"
 	"github.com/redis/go-redis/v9"
@@ -68,7 +69,11 @@ func main() {
 	}
 
 	healthHandler := health.NewHandler(registryHolder, llmPool)
-	httpServer := health.NewServer(defaultHTTPAddr, healthHandler)
+	openaiHandler := openai.NewHandler(plane, logger)
+	mux := http.NewServeMux()
+	healthHandler.Register(mux)
+	openaiHandler.Register(mux)
+	httpServer := health.NewHTTPServer(defaultHTTPAddr, mux)
 
 	go func() {
 		logger.Info("health server listening", "addr", defaultHTTPAddr)
@@ -116,6 +121,7 @@ type dataPlane struct {
 	mu       sync.Mutex
 	snap     *configmgmt.Snapshot
 	redis    *redis.Client
+	queue    *queue.RedisQueue
 	cancel   context.CancelFunc
 	done     chan struct{}
 	httpAddr string
@@ -209,6 +215,7 @@ func (d *dataPlane) Apply(snap configmgmt.Snapshot, first bool) error {
 			_ = d.redis.Close()
 			d.redis = nil
 		}
+		d.queue = nil
 	}
 
 	cloudevent.ConfigureTypes(snap.CloudEventTypePrefix)
@@ -217,10 +224,6 @@ func (d *dataPlane) Apply(snap configmgmt.Snapshot, first bool) error {
 
 	if needRedisRestart {
 		d.redis = newRedis
-
-		workerCtx, cancel := context.WithCancel(d.parent)
-		d.cancel = cancel
-		d.done = make(chan struct{})
 		eventQueue := queue.NewRedisQueue(
 			d.redis,
 			snap.InputQueue,
@@ -229,6 +232,11 @@ func (d *dataPlane) Apply(snap configmgmt.Snapshot, first bool) error {
 			snap.PriorityHighCount,
 			snap.PriorityMediumCount,
 		)
+		d.queue = eventQueue
+
+		workerCtx, cancel := context.WithCancel(d.parent)
+		d.cancel = cancel
+		d.done = make(chan struct{})
 		appWorker := worker.New(eventQueue, eventQueue, d.llmPool, d.llmPool, d.registry, d.overridePolicy, d.logger)
 		go func() {
 			defer close(d.done)
@@ -254,10 +262,20 @@ func (d *dataPlane) Stop() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.stopWorkerLocked()
+	d.queue = nil
 	if d.redis != nil {
 		_ = d.redis.Close()
 		d.redis = nil
 	}
+}
+
+func (d *dataPlane) InferenceQueue() openai.Queue {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.queue == nil {
+		return nil
+	}
+	return d.queue
 }
 
 func (d *dataPlane) stopWorkerLocked() {

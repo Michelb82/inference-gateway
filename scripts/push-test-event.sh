@@ -1,35 +1,26 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REDIS_CONTAINER="${REDIS_CONTAINER:-redis_construction}"
-INPUT_QUEUE="${INPUT_QUEUE:-queue:ai.requests}"
-OUTPUT_QUEUE="${OUTPUT_QUEUE:-queue:ai.responses}"
-TIMEOUT="${TIMEOUT:-30}"
+BASE_URL="${BASE_URL:-http://localhost:18080}"
 CAPABILITY="${CAPABILITY:-intent-classification}"
 MESSAGE="${MESSAGE:-I need my living room painted}"
-EVENT_TYPE="${EVENT_TYPE:-${CLOUDEVENT_TYPE_PREFIX:-com.mywebsite.ai}.request}"
+ORG_ID="${ORG_ID:-}"
 
-PAYLOAD=$(cat <<EOF
+BODY=$(cat <<EOF
 {
-  "type": "${EVENT_TYPE}",
-  "source": "/ai-gateway",
-  "subject": null,
-  "id": "smoke-test-1",
-  "organisation_id": "7",
-  "time": "2026-07-28T22:00:00+00:00",
-  "datacontenttype": "application/json",
-  "data": {
-    "capability": "${CAPABILITY}",
-    "input": {
-      "message": "${MESSAGE}"
-    }
-  }
+  "model": "${CAPABILITY}",
+  "messages": [
+    {"role": "user", "content": "${MESSAGE}"}
+  ]
 }
 EOF
 )
 
-echo "Pushing ${CAPABILITY} test event to ${INPUT_QUEUE}..."
-docker exec "${REDIS_CONTAINER}" redis-cli LPUSH "${INPUT_QUEUE}" "${PAYLOAD}" >/dev/null
+HEADERS=(-H "Content-Type: application/json")
+if [[ -n "${ORG_ID}" ]]; then
+  HEADERS+=(-H "X-Organisation-Id: ${ORG_ID}")
+fi
 
-echo "Waiting for response on ${OUTPUT_QUEUE} (timeout ${TIMEOUT}s)..."
-docker exec "${REDIS_CONTAINER}" redis-cli BRPOP "${OUTPUT_QUEUE}" "${TIMEOUT}"
+echo "POST ${BASE_URL}/v1/chat/completions model=${CAPABILITY}"
+curl -sS "${HEADERS[@]}" -d "${BODY}" "${BASE_URL}/v1/chat/completions"
+echo

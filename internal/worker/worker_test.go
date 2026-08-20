@@ -450,6 +450,92 @@ func TestHandleUnparseableOutput(t *testing.T) {
 	}
 }
 
+func TestHandleModelAvailabilityError(t *testing.T) {
+	request := mustEvent(t, "request_intent.json")
+	publisher := &fakePublisher{}
+	ollama := &fakeOllama{result: `{"intent":"x","confidence":1}`}
+	w := New(nil, publisher, ollama, &fakeModels{err: errors.New("tags down")}, testRegistry(), nil, nil)
+	if err := w.handle(context.Background(), request); err != nil {
+		t.Fatalf("handle() error = %v", err)
+	}
+	if publisher.events[0].Type != cloudevent.EventTypeRequestFailed {
+		t.Fatalf("Type = %q", publisher.events[0].Type)
+	}
+	if ollama.called {
+		t.Fatal("Complete should not be called when availability check errors")
+	}
+}
+
+func TestHandlePublishError(t *testing.T) {
+	request := mustEvent(t, "request_intent.json")
+	publisher := &fakePublisher{err: errors.New("redis write")}
+	w := New(nil, publisher, &fakeOllama{result: `{"intent":"x","confidence":1}`}, &fakeModels{available: true}, testRegistry(), nil, nil)
+	if err := w.handle(context.Background(), request); err == nil {
+		t.Fatal("handle() expected publish error")
+	}
+}
+
+func TestHandleMissingInput(t *testing.T) {
+	event := &cloudevent.Event{
+		Type:   cloudevent.EventTypeRequest,
+		Source: "/test",
+		ID:     "1",
+		Data:   map[string]any{"capability": "routing"},
+	}
+	publisher := &fakePublisher{}
+	_ = New(nil, publisher, &fakeOllama{}, &fakeModels{available: true}, testRegistry(), nil, nil).handle(context.Background(), event)
+	if publisher.events[0].Type != cloudevent.EventTypeRequestFailed {
+		t.Fatalf("Type = %q", publisher.events[0].Type)
+	}
+}
+
+func TestHandleMissingCapability(t *testing.T) {
+	event := &cloudevent.Event{
+		Type:   cloudevent.EventTypeRequest,
+		Source: "/test",
+		ID:     "1",
+		Data:   map[string]any{"input": map[string]any{"message": "hi"}},
+	}
+	publisher := &fakePublisher{}
+	_ = New(nil, publisher, &fakeOllama{}, &fakeModels{available: true}, testRegistry(), nil, nil).handle(context.Background(), event)
+	if publisher.events[0].Type != cloudevent.EventTypeRequestFailed {
+		t.Fatalf("Type = %q", publisher.events[0].Type)
+	}
+}
+
+func TestHandleUnsupportedEventType(t *testing.T) {
+	event := &cloudevent.Event{
+		Type:   "not-a-request",
+		Source: "/test",
+		ID:     "1",
+		Data:   map[string]any{"capability": "routing", "input": map[string]any{"message": "hi"}},
+	}
+	publisher := &fakePublisher{}
+	_ = New(nil, publisher, &fakeOllama{}, &fakeModels{available: true}, testRegistry(), nil, nil).handle(context.Background(), event)
+	if publisher.events[0].Type != cloudevent.EventTypeRequestFailed {
+		t.Fatalf("Type = %q", publisher.events[0].Type)
+	}
+}
+
+func TestRunReturnsOnConsumeError(t *testing.T) {
+	w := New(&fakeConsumer{err: errors.New("brpop failed")}, &fakePublisher{}, &fakeOllama{}, &fakeModels{available: true}, testRegistry(), nil, nil)
+	if err := w.Run(context.Background()); err == nil {
+		t.Fatal("Run() expected consume error")
+	}
+}
+
+func TestRunSkipsNilEventsUntilCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	consumer := &fakeConsumer{nilForever: true, cancel: cancel, nilsBeforeCancel: 2}
+	w := New(consumer, &fakePublisher{}, &fakeOllama{}, &fakeModels{available: true}, testRegistry(), nil, nil)
+	if err := w.Run(ctx); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if consumer.calls < 2 {
+		t.Fatalf("calls = %d, want at least 2 nil consumes", consumer.calls)
+	}
+}
+
 func mustEvent(t *testing.T, fixture string) *cloudevent.Event {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join("..", "..", "testdata", fixture))
@@ -465,11 +551,43 @@ func mustEvent(t *testing.T, fixture string) *cloudevent.Event {
 
 type fakePublisher struct {
 	events []*cloudevent.Event
+	err    error
 }
 
 func (f *fakePublisher) Publish(ctx context.Context, event *cloudevent.Event) error {
+	if f.err != nil {
+		return f.err
+	}
 	f.events = append(f.events, event)
 	return nil
+}
+
+type fakeConsumer struct {
+	events           []*cloudevent.Event
+	err              error
+	calls            int
+	nilForever       bool
+	nilsBeforeCancel int
+	cancel           context.CancelFunc
+}
+
+func (f *fakeConsumer) Consume(ctx context.Context) (*cloudevent.Event, error) {
+	f.calls++
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.nilForever {
+		if f.cancel != nil && f.calls >= f.nilsBeforeCancel {
+			f.cancel()
+		}
+		return nil, nil
+	}
+	if len(f.events) == 0 {
+		return nil, nil
+	}
+	event := f.events[0]
+	f.events = f.events[1:]
+	return event, nil
 }
 
 type fakeOllama struct {

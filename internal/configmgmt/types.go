@@ -24,6 +24,8 @@ type RankedModelRef struct {
 	MaxInputChars int    `json:"max_input_chars,omitempty"`
 }
 
+// Ingress is the internal Redis work queue (not the producer contract).
+// Producers call OpenAI HTTP; the gateway enqueues CloudEvents here.
 type Ingress struct {
 	Adapter             string `json:"adapter"`
 	Address             string `json:"address"`

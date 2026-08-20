@@ -2,6 +2,7 @@ package queue
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -12,7 +13,13 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-const keyPrefix = "queue:"
+const (
+	keyPrefix      = "queue:"
+	correlationTTL = 5 * time.Minute
+)
+
+// ErrWaitTimeout is returned when Wait's BRPOP expires with no correlated response.
+var ErrWaitTimeout = errors.New("inference wait timeout")
 
 type RedisQueue struct {
 	client       *redis.Client
@@ -79,6 +86,45 @@ func (q *RedisQueue) Consume(ctx context.Context) (*cloudevent.Event, error) {
 	}
 }
 
+func (q *RedisQueue) Enqueue(ctx context.Context, event *cloudevent.Event) error {
+	payload, err := event.ToJSON()
+	if err != nil {
+		return err
+	}
+	key := q.key(q.inputQueue)
+	if err := q.client.LPush(ctx, key, payload).Err(); err != nil {
+		return fmt.Errorf("enqueue to %s: %w", key, err)
+	}
+	return nil
+}
+
+func (q *RedisQueue) Wait(ctx context.Context, requestID string, timeout time.Duration) (*cloudevent.Event, error) {
+	requestID = strings.TrimSpace(requestID)
+	if requestID == "" {
+		return nil, fmt.Errorf("request id must not be blank")
+	}
+	if timeout <= 0 {
+		timeout = q.brpopTimeout
+	}
+
+	key := q.correlationKey(requestID)
+	result, err := q.client.BRPop(ctx, timeout, key).Result()
+	if err == redis.Nil {
+		return nil, ErrWaitTimeout
+	}
+	if err != nil {
+		return nil, fmt.Errorf("wait on %s: %w", key, err)
+	}
+	if len(result) < 2 {
+		return nil, ErrWaitTimeout
+	}
+	event, err := cloudevent.FromJSON(result[1])
+	if err != nil {
+		return nil, fmt.Errorf("decode correlated response: %w", err)
+	}
+	return event, nil
+}
+
 func (q *RedisQueue) Publish(ctx context.Context, event *cloudevent.Event) error {
 	payload, err := event.ToJSON()
 	if err != nil {
@@ -88,6 +134,19 @@ func (q *RedisQueue) Publish(ctx context.Context, event *cloudevent.Event) error
 	key := q.key(q.outputQueue)
 	if err := q.client.LPush(ctx, key, payload).Err(); err != nil {
 		return fmt.Errorf("publish to %s: %w", key, err)
+	}
+
+	if event != nil && event.Subject != nil {
+		subject := strings.TrimSpace(*event.Subject)
+		if subject != "" {
+			corr := q.correlationKey(subject)
+			if err := q.client.LPush(ctx, corr, payload).Err(); err != nil {
+				return fmt.Errorf("publish to %s: %w", corr, err)
+			}
+			if err := q.client.Expire(ctx, corr, correlationTTL).Err(); err != nil {
+				return fmt.Errorf("expire %s: %w", corr, err)
+			}
+		}
 	}
 	return nil
 }
@@ -175,6 +234,10 @@ func (q *RedisQueue) popLane(ctx context.Context, level priority.Level) (*cloude
 		return nil, nil
 	}
 	return event, nil
+}
+
+func (q *RedisQueue) correlationKey(requestID string) string {
+	return q.key(q.outputQueue + ":" + requestID)
 }
 
 func (q *RedisQueue) laneKey(level priority.Level) string {

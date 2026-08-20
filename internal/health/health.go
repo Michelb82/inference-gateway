@@ -163,12 +163,16 @@ func colorFor(status string) string {
 	}
 }
 
+func NewHTTPServer(addr string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+}
+
 func NewServer(addr string, handler *Handler) *http.Server {
 	mux := http.NewServeMux()
 	handler.Register(mux)
-	return &http.Server{
-		Addr:              addr,
-		Handler:           mux,
-		ReadHeaderTimeout: 5 * time.Second,
-	}
+	return NewHTTPServer(addr, mux)
 }

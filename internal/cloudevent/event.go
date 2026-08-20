@@ -139,6 +139,10 @@ func NewResponse(request *Event, responseType string, data map[string]any) *Even
 	}
 }
 
+func NewID() string {
+	return generateID()
+}
+
 func generateID() string {
 	now := time.Now().UTC().UnixNano()
 	return fmt.Sprintf("%016x-%08x", now, now&0xffffffff)
