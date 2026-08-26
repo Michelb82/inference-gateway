@@ -2,17 +2,18 @@ package configmgmt
 
 // Manifest is the ops/bindings document supplied locally or by AI Manager.
 // Capability semantics (prompts, I/O shapes, parsers) live in the gateway's
-// capability package; this document only catalogs models and binds them to
-// those known capability ids via capability_models.
+// capability package; this document only catalogs inference endpoints and
+// binds them to those known capability ids via capability_models.
 type Manifest struct {
-	Models           []Model                     `json:"models"`
-	CapabilityModels map[string][]RankedModelRef `json:"capability_models"`
-	Ingress          Ingress                     `json:"ingress"`
-	Config           RuntimeConfig               `json:"config"`
+	InferenceEndpoint []Endpoint                  `json:"inference_endpoint"`
+	CapabilityModels  map[string][]RankedModelRef `json:"capability_models"`
+	Ingress           Ingress                     `json:"ingress"`
+	Config            RuntimeConfig               `json:"config"`
 }
 
-type Model struct {
+type Endpoint struct {
 	ID               string `json:"id"`
+	Vendor           string `json:"vendor"`
 	URL              string `json:"url"`
 	Model            string `json:"model"`
 	KeepAliveSeconds int    `json:"keep_alive_seconds"`
@@ -45,6 +46,7 @@ type RuntimeConfig struct {
 
 // ModelBinding is the resolved rank-0 binding for a capability.
 type ModelBinding struct {
+	Vendor        string
 	BaseURL       string
 	Model         string
 	KeepAlive     string

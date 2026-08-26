@@ -17,10 +17,10 @@ import (
 
 func validManifest() configmgmt.Manifest {
 	return configmgmt.Manifest{
-		Models: []configmgmt.Model{
-			{ID: "qwen3:1.7b", URL: "http://llm-model:11434", Model: "qwen3:1.7b-q4_K_M", KeepAliveSeconds: 300},
-			{ID: "qwen3:4b", URL: "http://llm-model:11434", Model: "qwen3:4b-q4_K_M", KeepAliveSeconds: 300},
-			{ID: "qwen3:14b", URL: "http://llm-model:11434", Model: "qwen3:14b-q4_K_M", KeepAliveSeconds: 120},
+		InferenceEndpoint: []configmgmt.Endpoint{
+			{ID: "qwen3:1.7b", Vendor: "ollama", URL: "http://llm-model:11434", Model: "qwen3:1.7b-q4_K_M", KeepAliveSeconds: 300},
+			{ID: "qwen3:4b", Vendor: "ollama", URL: "http://llm-model:11434", Model: "qwen3:4b-q4_K_M", KeepAliveSeconds: 300},
+			{ID: "qwen3:14b", Vendor: "ollama", URL: "http://llm-model:11434", Model: "qwen3:14b-q4_K_M", KeepAliveSeconds: 120},
 		},
 		CapabilityModels: map[string][]configmgmt.RankedModelRef{
 			"routing": {
@@ -65,6 +65,9 @@ func TestLoadDistManifest(t *testing.T) {
 	if snap.Bindings["routing"].Model != "qwen3:1.7b-q4_K_M" {
 		t.Fatalf("routing model = %q", snap.Bindings["routing"].Model)
 	}
+	if snap.Bindings["routing"].Vendor != "ollama" {
+		t.Fatalf("routing vendor = %q", snap.Bindings["routing"].Vendor)
+	}
 	if snap.Bindings["routing"].MaxInputChars != 200 {
 		t.Fatalf("routing max chars = %d", snap.Bindings["routing"].MaxInputChars)
 	}
@@ -86,6 +89,42 @@ func TestLoadDistManifest(t *testing.T) {
 	if snap.Bindings["translate"].KeepAlive != "120s" {
 		t.Fatalf("translate keep_alive = %q", snap.Bindings["translate"].KeepAlive)
 	}
+
+	var openai *configmgmt.Endpoint
+	for i := range m.InferenceEndpoint {
+		if m.InferenceEndpoint[i].ID == "openai" {
+			openai = &m.InferenceEndpoint[i]
+			break
+		}
+	}
+	if openai == nil {
+		t.Fatal("manifest.json.dist missing inference_endpoint id openai")
+	}
+	if openai.Vendor != "openai" {
+		t.Fatalf("openai vendor = %q", openai.Vendor)
+	}
+	if openai.URL != "https://someurl" {
+		t.Fatalf("openai url = %q", openai.URL)
+	}
+	if openai.Model != "" {
+		t.Fatalf("openai model = %q, want empty (null)", openai.Model)
+	}
+	if last := lastRankedModel(m.CapabilityModels["routing"]); last != "openai" {
+		t.Fatalf("routing last rank = %q, want openai", last)
+	}
+}
+
+func lastRankedModel(refs []configmgmt.RankedModelRef) string {
+	if len(refs) == 0 {
+		return ""
+	}
+	best := refs[0]
+	for _, ref := range refs[1:] {
+		if ref.Rank > best.Rank {
+			best = ref
+		}
+	}
+	return best.Model
 }
 
 func TestValidateAndResolve(t *testing.T) {
@@ -106,6 +145,9 @@ func TestValidateAndResolve(t *testing.T) {
 	}
 	if routing.MaxInputChars != 200 {
 		t.Fatalf("routing max chars = %d", routing.MaxInputChars)
+	}
+	if routing.Vendor != "ollama" {
+		t.Fatalf("routing vendor = %q, want ollama", routing.Vendor)
 	}
 	if snap.Bindings["intent-classification"].MaxInputChars != 8000 {
 		t.Fatalf("intent max chars = %d", snap.Bindings["intent-classification"].MaxInputChars)
@@ -146,6 +188,74 @@ func TestResolveUsesRankZeroOnly(t *testing.T) {
 	}
 	if snap.Bindings["routing"].Model != "qwen3:1.7b-q4_K_M" {
 		t.Fatalf("expected rank 0 model, got %q", snap.Bindings["routing"].Model)
+	}
+}
+
+func TestResolveOpenAIVendor(t *testing.T) {
+	m := validManifest()
+	m.InferenceEndpoint = append(m.InferenceEndpoint, configmgmt.Endpoint{
+		ID:               "gpt-4o-mini",
+		URL:              "https://api.openai.com",
+		Model:            "gpt-4o-mini",
+		Vendor:           "openai",
+		KeepAliveSeconds: 0,
+	})
+	m.CapabilityModels["routing"] = []configmgmt.RankedModelRef{
+		{Rank: 0, Model: "gpt-4o-mini"},
+	}
+	if err := configmgmt.Validate(m); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+	snap, err := configmgmt.Resolve(m)
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	routing := snap.Bindings["routing"]
+	if routing.Vendor != "openai" {
+		t.Fatalf("vendor = %q", routing.Vendor)
+	}
+	if routing.BaseURL != "https://api.openai.com" {
+		t.Fatalf("url = %q", routing.BaseURL)
+	}
+	if routing.Model != "gpt-4o-mini" {
+		t.Fatalf("model = %q", routing.Model)
+	}
+	if routing.KeepAlive != "" {
+		t.Fatalf("keep_alive = %q, want empty", routing.KeepAlive)
+	}
+}
+
+func TestResolveOpenAINullModel(t *testing.T) {
+	m := validManifest()
+	m.InferenceEndpoint = append(m.InferenceEndpoint, configmgmt.Endpoint{
+		ID:               "openai",
+		Vendor:           "openai",
+		URL:              "https://someurl",
+		Model:            "",
+		KeepAliveSeconds: 300,
+	})
+	m.CapabilityModels["routing"] = []configmgmt.RankedModelRef{
+		{Rank: 0, Model: "openai"},
+	}
+	if err := configmgmt.Validate(m); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+	snap, err := configmgmt.Resolve(m)
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	routing := snap.Bindings["routing"]
+	if routing.Vendor != "openai" {
+		t.Fatalf("vendor = %q", routing.Vendor)
+	}
+	if routing.Model != "" {
+		t.Fatalf("model = %q, want empty", routing.Model)
+	}
+	if routing.BaseURL != "https://someurl" {
+		t.Fatalf("url = %q", routing.BaseURL)
+	}
+	if routing.KeepAlive != "300s" {
+		t.Fatalf("keep_alive = %q", routing.KeepAlive)
 	}
 }
 
@@ -216,7 +326,7 @@ func TestResolveBindsOnlyKnownCapabilities(t *testing.T) {
 
 func TestResolveTrimsTrailingSlashOnURL(t *testing.T) {
 	m := validManifest()
-	m.Models[0].URL = "http://llm-model:11434/"
+	m.InferenceEndpoint[0].URL = "http://llm-model:11434/"
 	snap, err := configmgmt.Resolve(m)
 	if err != nil {
 		t.Fatalf("Resolve() error = %v", err)
@@ -381,44 +491,65 @@ func TestValidateErrors(t *testing.T) {
 			substr: "translate",
 		},
 		{
-			name: "empty models",
+			name: "empty inference_endpoint",
 			mutate: func(m *configmgmt.Manifest) {
-				m.Models = nil
+				m.InferenceEndpoint = nil
 			},
-			substr: "models",
+			substr: "inference_endpoint",
 		},
 		{
-			name: "blank model id",
+			name: "blank endpoint id",
 			mutate: func(m *configmgmt.Manifest) {
-				m.Models[0].ID = "  "
+				m.InferenceEndpoint[0].ID = "  "
 			},
 			substr: "id",
 		},
 		{
-			name: "blank model url",
+			name: "blank endpoint url",
 			mutate: func(m *configmgmt.Manifest) {
-				m.Models[0].URL = ""
+				m.InferenceEndpoint[0].URL = ""
 			},
 			substr: "url",
 		},
 		{
 			name: "blank ollama model name",
 			mutate: func(m *configmgmt.Manifest) {
-				m.Models[0].Model = ""
+				m.InferenceEndpoint[0].Model = ""
 			},
 			substr: "model",
 		},
 		{
 			name: "keep_alive too low",
 			mutate: func(m *configmgmt.Manifest) {
-				m.Models[0].KeepAliveSeconds = 0
+				m.InferenceEndpoint[0].KeepAliveSeconds = 0
 			},
 			substr: "keep_alive_seconds",
 		},
 		{
-			name: "duplicate model id",
+			name: "unsupported inference vendor",
 			mutate: func(m *configmgmt.Manifest) {
-				m.Models = append(m.Models, m.Models[0])
+				m.InferenceEndpoint[0].Vendor = "vllm"
+			},
+			substr: "inference vendor",
+		},
+		{
+			name: "blank vendor",
+			mutate: func(m *configmgmt.Manifest) {
+				m.InferenceEndpoint[0].Vendor = "  "
+			},
+			substr: "vendor",
+		},
+		{
+			name: "negative keep_alive",
+			mutate: func(m *configmgmt.Manifest) {
+				m.InferenceEndpoint[0].KeepAliveSeconds = -1
+			},
+			substr: "keep_alive_seconds",
+		},
+		{
+			name: "duplicate endpoint id",
+			mutate: func(m *configmgmt.Manifest) {
+				m.InferenceEndpoint = append(m.InferenceEndpoint, m.InferenceEndpoint[0])
 			},
 			substr: "duplicates id",
 		},
@@ -555,14 +686,14 @@ func TestValidateErrors(t *testing.T) {
 }
 
 func TestParseInvalidJSON(t *testing.T) {
-	_, err := configmgmt.Parse([]byte(`{"models":`))
+	_, err := configmgmt.Parse([]byte(`{"inference_endpoint":`))
 	if err == nil {
 		t.Fatalf("expected decode error")
 	}
 }
 
 func TestParseRejectsInvalidManifest(t *testing.T) {
-	_, err := configmgmt.Parse([]byte(`{"models":[]}`))
+	_, err := configmgmt.Parse([]byte(`{"inference_endpoint":[]}`))
 	if err == nil {
 		t.Fatalf("expected validation error")
 	}
@@ -587,8 +718,8 @@ func TestParseIgnoresLegacyCapabilitiesField(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
-	if len(got.Models) != 3 {
-		t.Fatalf("models = %d", len(got.Models))
+	if len(got.InferenceEndpoint) != 3 {
+		t.Fatalf("inference_endpoint = %d", len(got.InferenceEndpoint))
 	}
 }
 
@@ -606,8 +737,8 @@ func TestLoadFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadFile() error = %v", err)
 	}
-	if len(m.Models) != 3 {
-		t.Fatalf("models = %d", len(m.Models))
+	if len(m.InferenceEndpoint) != 3 {
+		t.Fatalf("inference_endpoint = %d", len(m.InferenceEndpoint))
 	}
 }
 
@@ -643,8 +774,8 @@ func TestFetchURLSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FetchURL() error = %v", err)
 	}
-	if len(got.Models) != 3 {
-		t.Fatalf("models = %d", len(got.Models))
+	if len(got.InferenceEndpoint) != 3 {
+		t.Fatalf("inference_endpoint = %d", len(got.InferenceEndpoint))
 	}
 }
 
@@ -662,7 +793,7 @@ func TestFetchURLNon2xx(t *testing.T) {
 
 func TestFetchURLInvalidBody(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"models":[]}`))
+		_, _ = w.Write([]byte(`{"inference_endpoint":[]}`))
 	}))
 	defer srv.Close()
 
@@ -714,7 +845,7 @@ func TestManagerBootstrapAndSoftFailPoll(t *testing.T) {
 
 func TestManagerBootstrapInvalidFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "bad.json")
-	_ = os.WriteFile(path, []byte(`{"models":[]}`), 0o644)
+	_ = os.WriteFile(path, []byte(`{"inference_endpoint":[]}`), 0o644)
 	mgr := configmgmt.NewManager("http://example.invalid/manifest.json", time.Hour, nil, nil)
 	if err := mgr.Bootstrap(path); err == nil {
 		t.Fatalf("expected bootstrap error")
@@ -904,7 +1035,7 @@ func TestManagerPollInvalidBodyKeepsPrevious(t *testing.T) {
 	_ = os.WriteFile(path, data, 0o644)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"models":[]}`))
+		_, _ = w.Write([]byte(`{"inference_endpoint":[]}`))
 	}))
 	defer srv.Close()
 

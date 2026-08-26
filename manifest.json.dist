@@ -1,37 +1,50 @@
 {
-  "models": [
+  "inference_endpoint": [
     {
       "id": "qwen3:1.7b",
+      "vendor": "ollama",
       "url": "http://llm-model:11434",
       "model": "qwen3:1.7b-q4_K_M",
       "keep_alive_seconds": 300
     },
     {
       "id": "qwen3:4b",
+      "vendor": "ollama",
       "url": "http://llm-model:11434",
       "model": "qwen3:4b-q4_K_M",
       "keep_alive_seconds": 300
     },
     {
       "id": "qwen3:14b",
+      "vendor": "ollama",
       "url": "http://llm-model:11434",
       "model": "qwen3:14b-q4_K_M",
       "keep_alive_seconds": 120
+    },
+    {
+      "id": "openai",
+      "vendor": "openai",
+      "url": "https://someurl",
+      "model": null,
+      "keep_alive_seconds": 300
     }
   ],
   "capability_models": {
     "routing": [
       {"rank": 0, "model": "qwen3:1.7b", "max_input_chars": 200},
-      {"rank": 1, "model": "qwen3:4b"}
+      {"rank": 1, "model": "qwen3:4b"},
+      {"rank": 2, "model": "openai"}
     ],
     "intent-classification": [
       {"rank": 0, "model": "qwen3:4b", "max_input_chars": 8000},
       {"rank": 1, "model": "qwen3:14b"},
-      {"rank": 2, "model": "qwen3:1.7b"}
+      {"rank": 2, "model": "qwen3:1.7b"},
+      {"rank": 3, "model": "openai"}
     ],
     "translate": [
       {"rank": 0, "model": "qwen3:14b", "max_input_chars": 16000},
-      {"rank": 1, "model": "qwen3:4b"}
+      {"rank": 1, "model": "qwen3:4b"},
+      {"rank": 2, "model": "openai"}
     ]
   },
   "ingress": {

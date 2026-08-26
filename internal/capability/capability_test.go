@@ -81,6 +81,24 @@ func TestRegistryGetRequiresURLAndModel(t *testing.T) {
 	}
 }
 
+func TestRegistryGetAllowsEmptyOpenAIModel(t *testing.T) {
+	reg, err := capability.NewRegistryFromBindings(map[string]capability.ModelBinding{
+		capability.Routing:              {Vendor: "openai", BaseURL: "https://someurl", Model: "", KeepAlive: "1m", MaxInputChars: 1},
+		capability.IntentClassification: {Vendor: "openai", BaseURL: "https://someurl", Model: "", KeepAlive: "1m", MaxInputChars: 2},
+		capability.Translate:            {Vendor: "openai", BaseURL: "https://someurl", Model: "", KeepAlive: "1m", MaxInputChars: 3},
+	})
+	if err != nil {
+		t.Fatalf("NewRegistryFromBindings() error = %v", err)
+	}
+	def, err := reg.Get(capability.Routing)
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if def.Model != "" || def.Vendor != "openai" {
+		t.Fatalf("def = %+v", def)
+	}
+}
+
 func TestHolderAllWhenReady(t *testing.T) {
 	h := capability.NewHolder()
 	h.Store(testRegistry())

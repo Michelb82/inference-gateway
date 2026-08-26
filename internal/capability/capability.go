@@ -52,6 +52,7 @@ func IsKnown(name string) bool {
 
 type Definition struct {
 	Name          string
+	Vendor        string
 	BaseURL       string
 	Model         string
 	KeepAlive     string
@@ -61,6 +62,7 @@ type Definition struct {
 
 // ModelBinding maps a capability to its LLM endpoint, model, keep-alive TTL, and input bounds.
 type ModelBinding struct {
+	Vendor        string
 	BaseURL       string
 	Model         string
 	KeepAlive     string
@@ -96,6 +98,7 @@ func NewRegistryFromBindings(bindings map[string]ModelBinding) (*Registry, error
 		}
 		defs[name] = Definition{
 			Name:          name,
+			Vendor:        strings.ToLower(strings.TrimSpace(binding.Vendor)),
 			BaseURL:       strings.TrimRight(strings.TrimSpace(binding.BaseURL), "/"),
 			Model:         strings.TrimSpace(binding.Model),
 			KeepAlive:     strings.TrimSpace(binding.KeepAlive),
@@ -167,7 +170,7 @@ func (r *Registry) Get(name string) (Definition, error) {
 	if def.BaseURL == "" {
 		return Definition{}, fmt.Errorf("capability %s has no LLM URL configured", name)
 	}
-	if def.Model == "" {
+	if def.Model == "" && def.Vendor != "openai" {
 		return Definition{}, fmt.Errorf("capability %s has no model configured", name)
 	}
 	return def, nil

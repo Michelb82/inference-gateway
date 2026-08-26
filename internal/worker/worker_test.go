@@ -3,13 +3,17 @@ package worker
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/mywebsite/construction-ai-gateway/internal/capability"
 	"github.com/mywebsite/construction-ai-gateway/internal/cloudevent"
+	"github.com/mywebsite/construction-ai-gateway/internal/inference"
 )
 
 func testRegistry() *capability.Registry {
@@ -28,13 +32,43 @@ func testOverridePolicy(orgs []string, maxChars int) *capability.OverridePolicyH
 
 func strPtr(s string) *string { return &s }
 
+func TestHandleCompleteDoesNotListModels(t *testing.T) {
+	var lists atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/models" {
+			lists.Add(1)
+			http.NotFound(w, r)
+			return
+		}
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/chat/completions" {
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"intent\":\"wall-painting\",\"confidence\":0.95}"}}]}`))
+	}))
+	t.Cleanup(server.Close)
+
+	binding := capability.ModelBinding{
+		Vendor:        "openai",
+		BaseURL:       server.URL,
+		Model:         "gpt-4o-mini",
+		MaxInputChars: 8000,
+	}
+	reg := capability.NewRegistry(binding, binding, binding)
+	w := New(nil, &fakePublisher{}, inference.NewRouter("DEV_KEY"), reg, nil, nil)
+	if err := w.handle(context.Background(), mustEvent(t, "request_intent.json")); err != nil {
+		t.Fatalf("handle() error = %v", err)
+	}
+	if lists.Load() != 0 {
+		t.Fatalf("worker listed models %d times", lists.Load())
+	}
+}
+
 func TestHandleIntentSuccess(t *testing.T) {
 	request := mustEvent(t, "request_intent.json")
 	publisher := &fakePublisher{}
 	ollama := &fakeOllama{result: `{"intent":"wall-painting","confidence":0.95}`}
-	models := &fakeModels{available: true}
-
-	w := New(nil, publisher, ollama, models, testRegistry(), nil, nil)
+	w := New(nil, publisher, ollama, testRegistry(), nil, nil)
 	if err := w.handle(context.Background(), request); err != nil {
 		t.Fatalf("handle() error = %v", err)
 	}
@@ -65,9 +99,7 @@ func TestHandleRoutingSuccess(t *testing.T) {
 	request := mustEvent(t, "request_routing.json")
 	publisher := &fakePublisher{}
 	ollama := &fakeOllama{result: `{"capability":"intent-classification"}`}
-	models := &fakeModels{available: true}
-
-	w := New(nil, publisher, ollama, models, testRegistry(), nil, nil)
+	w := New(nil, publisher, ollama, testRegistry(), nil, nil)
 	if err := w.handle(context.Background(), request); err != nil {
 		t.Fatalf("handle() error = %v", err)
 	}
@@ -95,9 +127,7 @@ func TestHandleRoutingWithSystemPromptOverride(t *testing.T) {
 	}
 	publisher := &fakePublisher{}
 	ollama := &fakeOllama{result: `{"jobs":[{"job_id":1,"confidence":0.9}],"route":"wizard","summary":"wall painting"}`}
-	models := &fakeModels{available: true}
-
-	w := New(nil, publisher, ollama, models, testRegistry(), testOverridePolicy([]string{"7"}, 4000), nil)
+	w := New(nil, publisher, ollama, testRegistry(), testOverridePolicy([]string{"7"}, 4000), nil)
 	if err := w.handle(context.Background(), event); err != nil {
 		t.Fatalf("handle() error = %v", err)
 	}
@@ -130,7 +160,7 @@ func TestHandleRejectsSystemPromptWithoutAllowlist(t *testing.T) {
 	}
 	publisher := &fakePublisher{}
 	ollama := &fakeOllama{result: `{"capability":"intent-classification"}`}
-	w := New(nil, publisher, ollama, &fakeModels{available: true}, testRegistry(), testOverridePolicy(nil, 4000), nil)
+	w := New(nil, publisher, ollama, testRegistry(), testOverridePolicy(nil, 4000), nil)
 	if err := w.handle(context.Background(), event); err != nil {
 		t.Fatalf("handle() error = %v", err)
 	}
@@ -160,7 +190,7 @@ func TestHandleRejectsSystemPromptWithoutOrganisation(t *testing.T) {
 	}
 	publisher := &fakePublisher{}
 	ollama := &fakeOllama{result: `{"capability":"intent-classification"}`}
-	w := New(nil, publisher, ollama, &fakeModels{available: true}, testRegistry(), testOverridePolicy([]string{"7"}, 4000), nil)
+	w := New(nil, publisher, ollama, testRegistry(), testOverridePolicy([]string{"7"}, 4000), nil)
 	if err := w.handle(context.Background(), event); err != nil {
 		t.Fatalf("handle() error = %v", err)
 	}
@@ -188,7 +218,7 @@ func TestHandleRejectsOversizedSystemPrompt(t *testing.T) {
 	}
 	publisher := &fakePublisher{}
 	ollama := &fakeOllama{result: `{"capability":"intent-classification"}`}
-	w := New(nil, publisher, ollama, &fakeModels{available: true}, testRegistry(), testOverridePolicy([]string{"7"}, 10), nil)
+	w := New(nil, publisher, ollama, testRegistry(), testOverridePolicy([]string{"7"}, 10), nil)
 	if err := w.handle(context.Background(), event); err != nil {
 		t.Fatalf("handle() error = %v", err)
 	}
@@ -227,7 +257,7 @@ func TestHandleRejectsSystemPromptForNonAllowlistedOrg(t *testing.T) {
 	}
 	publisher := &fakePublisher{}
 	ollama := &fakeOllama{result: `{"capability":"intent-classification"}`}
-	w := New(nil, publisher, ollama, &fakeModels{available: true}, testRegistry(), testOverridePolicy([]string{"7"}, 4000), nil)
+	w := New(nil, publisher, ollama, testRegistry(), testOverridePolicy([]string{"7"}, 4000), nil)
 	if err := w.handle(context.Background(), event); err != nil {
 		t.Fatalf("handle() error = %v", err)
 	}
@@ -256,7 +286,7 @@ func TestHandleAllowsSystemPromptAtExactCharLimit(t *testing.T) {
 	}
 	publisher := &fakePublisher{}
 	ollama := &fakeOllama{result: `{"jobs":[{"job_id":1}],"route":"wizard"}`}
-	w := New(nil, publisher, ollama, &fakeModels{available: true}, testRegistry(), testOverridePolicy([]string{"7"}, 10), nil)
+	w := New(nil, publisher, ollama, testRegistry(), testOverridePolicy([]string{"7"}, 10), nil)
 	if err := w.handle(context.Background(), event); err != nil {
 		t.Fatalf("handle() error = %v", err)
 	}
@@ -283,7 +313,7 @@ func TestHandleAllowlistedOrgWithoutSystemPromptUsesCapabilitySchema(t *testing.
 	}
 	publisher := &fakePublisher{}
 	ollama := &fakeOllama{result: `{"capability":"intent-classification","extra":"ignored"}`}
-	w := New(nil, publisher, ollama, &fakeModels{available: true}, testRegistry(), testOverridePolicy([]string{"7"}, 4000), nil)
+	w := New(nil, publisher, ollama, testRegistry(), testOverridePolicy([]string{"7"}, 4000), nil)
 	if err := w.handle(context.Background(), event); err != nil {
 		t.Fatalf("handle() error = %v", err)
 	}
@@ -306,9 +336,7 @@ func TestHandleTranslateSuccess(t *testing.T) {
 	request := mustEvent(t, "request_translate.json")
 	publisher := &fakePublisher{}
 	ollama := &fakeOllama{result: `{"text":"Electrical installations for homes"}`}
-	models := &fakeModels{available: true}
-
-	w := New(nil, publisher, ollama, models, testRegistry(), nil, nil)
+	w := New(nil, publisher, ollama, testRegistry(), nil, nil)
 	if err := w.handle(context.Background(), request); err != nil {
 		t.Fatalf("handle() error = %v", err)
 	}
@@ -328,26 +356,6 @@ func TestHandleTranslateSuccess(t *testing.T) {
 	}
 }
 
-func TestHandleModelUnavailable(t *testing.T) {
-	request := mustEvent(t, "request_intent.json")
-	publisher := &fakePublisher{}
-	ollama := &fakeOllama{result: `{"intent":"x","confidence":1}`}
-	models := &fakeModels{available: false}
-
-	w := New(nil, publisher, ollama, models, testRegistry(), nil, nil)
-	if err := w.handle(context.Background(), request); err != nil {
-		t.Fatalf("handle() error = %v", err)
-	}
-
-	response := publisher.events[0]
-	if response.Type != cloudevent.EventTypeRequestFailed {
-		t.Fatalf("Type = %q", response.Type)
-	}
-	if ollama.called {
-		t.Fatalf("Complete should not be called when model unavailable")
-	}
-}
-
 func TestHandleUnknownCapability(t *testing.T) {
 	event := &cloudevent.Event{
 		Type:   cloudevent.EventTypeRequest,
@@ -359,7 +367,7 @@ func TestHandleUnknownCapability(t *testing.T) {
 		},
 	}
 	publisher := &fakePublisher{}
-	w := New(nil, publisher, &fakeOllama{}, &fakeModels{available: true}, testRegistry(), nil, nil)
+	w := New(nil, publisher, &fakeOllama{}, testRegistry(), nil, nil)
 	_ = w.handle(context.Background(), event)
 	if publisher.events[0].Type != cloudevent.EventTypeRequestFailed {
 		t.Fatalf("Type = %q", publisher.events[0].Type)
@@ -378,7 +386,7 @@ func TestHandleRejectsCallerModel(t *testing.T) {
 		},
 	}
 	publisher := &fakePublisher{}
-	w := New(nil, publisher, &fakeOllama{}, &fakeModels{available: true}, testRegistry(), nil, nil)
+	w := New(nil, publisher, &fakeOllama{}, testRegistry(), nil, nil)
 	_ = w.handle(context.Background(), event)
 	if publisher.events[0].Type != cloudevent.EventTypeRequestFailed {
 		t.Fatalf("Type = %q", publisher.events[0].Type)
@@ -389,7 +397,7 @@ func TestHandleOllamaError(t *testing.T) {
 	request := mustEvent(t, "request_intent.json")
 	publisher := &fakePublisher{}
 	ollama := &fakeOllama{err: errors.New("boom")}
-	w := New(nil, publisher, ollama, &fakeModels{available: true}, testRegistry(), nil, nil)
+	w := New(nil, publisher, ollama, testRegistry(), nil, nil)
 	_ = w.handle(context.Background(), request)
 	if publisher.events[0].Data["error"] != "boom" {
 		t.Fatalf("error = %v", publisher.events[0].Data["error"])
@@ -411,7 +419,7 @@ func TestHandleInputExceedsCharacterLimit(t *testing.T) {
 	}
 	publisher := &fakePublisher{}
 	ollama := &fakeOllama{result: `{"capability":"intent-classification"}`}
-	w := New(nil, publisher, ollama, &fakeModels{available: true}, testRegistry(), nil, nil)
+	w := New(nil, publisher, ollama, testRegistry(), nil, nil)
 	if err := w.handle(context.Background(), event); err != nil {
 		t.Fatalf("handle() error = %v", err)
 	}
@@ -443,33 +451,17 @@ func TestHandleUnparseableOutput(t *testing.T) {
 	request := mustEvent(t, "request_intent.json")
 	publisher := &fakePublisher{}
 	ollama := &fakeOllama{result: "not-json"}
-	w := New(nil, publisher, ollama, &fakeModels{available: true}, testRegistry(), nil, nil)
+	w := New(nil, publisher, ollama, testRegistry(), nil, nil)
 	_ = w.handle(context.Background(), request)
 	if publisher.events[0].Type != cloudevent.EventTypeRequestFailed {
 		t.Fatalf("Type = %q", publisher.events[0].Type)
 	}
 }
 
-func TestHandleModelAvailabilityError(t *testing.T) {
-	request := mustEvent(t, "request_intent.json")
-	publisher := &fakePublisher{}
-	ollama := &fakeOllama{result: `{"intent":"x","confidence":1}`}
-	w := New(nil, publisher, ollama, &fakeModels{err: errors.New("tags down")}, testRegistry(), nil, nil)
-	if err := w.handle(context.Background(), request); err != nil {
-		t.Fatalf("handle() error = %v", err)
-	}
-	if publisher.events[0].Type != cloudevent.EventTypeRequestFailed {
-		t.Fatalf("Type = %q", publisher.events[0].Type)
-	}
-	if ollama.called {
-		t.Fatal("Complete should not be called when availability check errors")
-	}
-}
-
 func TestHandlePublishError(t *testing.T) {
 	request := mustEvent(t, "request_intent.json")
 	publisher := &fakePublisher{err: errors.New("redis write")}
-	w := New(nil, publisher, &fakeOllama{result: `{"intent":"x","confidence":1}`}, &fakeModels{available: true}, testRegistry(), nil, nil)
+	w := New(nil, publisher, &fakeOllama{result: `{"intent":"x","confidence":1}`}, testRegistry(), nil, nil)
 	if err := w.handle(context.Background(), request); err == nil {
 		t.Fatal("handle() expected publish error")
 	}
@@ -483,7 +475,7 @@ func TestHandleMissingInput(t *testing.T) {
 		Data:   map[string]any{"capability": "routing"},
 	}
 	publisher := &fakePublisher{}
-	_ = New(nil, publisher, &fakeOllama{}, &fakeModels{available: true}, testRegistry(), nil, nil).handle(context.Background(), event)
+	_ = New(nil, publisher, &fakeOllama{}, testRegistry(), nil, nil).handle(context.Background(), event)
 	if publisher.events[0].Type != cloudevent.EventTypeRequestFailed {
 		t.Fatalf("Type = %q", publisher.events[0].Type)
 	}
@@ -497,7 +489,7 @@ func TestHandleMissingCapability(t *testing.T) {
 		Data:   map[string]any{"input": map[string]any{"message": "hi"}},
 	}
 	publisher := &fakePublisher{}
-	_ = New(nil, publisher, &fakeOllama{}, &fakeModels{available: true}, testRegistry(), nil, nil).handle(context.Background(), event)
+	_ = New(nil, publisher, &fakeOllama{}, testRegistry(), nil, nil).handle(context.Background(), event)
 	if publisher.events[0].Type != cloudevent.EventTypeRequestFailed {
 		t.Fatalf("Type = %q", publisher.events[0].Type)
 	}
@@ -511,14 +503,14 @@ func TestHandleUnsupportedEventType(t *testing.T) {
 		Data:   map[string]any{"capability": "routing", "input": map[string]any{"message": "hi"}},
 	}
 	publisher := &fakePublisher{}
-	_ = New(nil, publisher, &fakeOllama{}, &fakeModels{available: true}, testRegistry(), nil, nil).handle(context.Background(), event)
+	_ = New(nil, publisher, &fakeOllama{}, testRegistry(), nil, nil).handle(context.Background(), event)
 	if publisher.events[0].Type != cloudevent.EventTypeRequestFailed {
 		t.Fatalf("Type = %q", publisher.events[0].Type)
 	}
 }
 
 func TestRunReturnsOnConsumeError(t *testing.T) {
-	w := New(&fakeConsumer{err: errors.New("brpop failed")}, &fakePublisher{}, &fakeOllama{}, &fakeModels{available: true}, testRegistry(), nil, nil)
+	w := New(&fakeConsumer{err: errors.New("brpop failed")}, &fakePublisher{}, &fakeOllama{}, testRegistry(), nil, nil)
 	if err := w.Run(context.Background()); err == nil {
 		t.Fatal("Run() expected consume error")
 	}
@@ -527,7 +519,7 @@ func TestRunReturnsOnConsumeError(t *testing.T) {
 func TestRunSkipsNilEventsUntilCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	consumer := &fakeConsumer{nilForever: true, cancel: cancel, nilsBeforeCancel: 2}
-	w := New(consumer, &fakePublisher{}, &fakeOllama{}, &fakeModels{available: true}, testRegistry(), nil, nil)
+	w := New(consumer, &fakePublisher{}, &fakeOllama{}, testRegistry(), nil, nil)
 	if err := w.Run(ctx); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
@@ -600,26 +592,14 @@ type fakeOllama struct {
 	called       bool
 }
 
-func (f *fakeOllama) Complete(ctx context.Context, baseURL, systemPrompt, prompt, model, keepAlive string) (string, error) {
+func (f *fakeOllama) Complete(ctx context.Context, req inference.CompleteRequest) (string, error) {
 	f.called = true
-	f.systemPrompt = systemPrompt
-	f.prompt = prompt
-	f.model = model
-	f.keepAlive = keepAlive
+	f.systemPrompt = req.SystemPrompt
+	f.prompt = req.Prompt
+	f.model = req.Model
+	f.keepAlive = req.KeepAlive
 	if f.err != nil {
 		return "", f.err
 	}
 	return f.result, nil
-}
-
-type fakeModels struct {
-	available bool
-	err       error
-}
-
-func (f *fakeModels) ModelAvailable(ctx context.Context, baseURL, name string) (bool, error) {
-	if f.err != nil {
-		return false, f.err
-	}
-	return f.available, nil
 }

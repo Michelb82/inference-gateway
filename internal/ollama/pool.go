@@ -51,12 +51,12 @@ func (p *Pool) Complete(ctx context.Context, baseURL, systemPrompt, prompt, mode
 	return client.Complete(ctx, systemPrompt, prompt, model, keepAlive)
 }
 
-func (p *Pool) ModelAvailable(ctx context.Context, baseURL, name string) (bool, error) {
+func (p *Pool) ListModels(ctx context.Context, baseURL string) ([]string, error) {
 	client, err := p.Client(baseURL)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
-	return client.ModelAvailable(ctx, name)
+	return client.ListModels(ctx)
 }
 
 // EnsureModels checks each target's LLM endpoint and pulls missing models.

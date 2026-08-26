@@ -11,6 +11,7 @@ type Config struct {
 	ManifestURL             string
 	ManifestPollingInterval time.Duration
 	Debug                   bool
+	OpenAIBearerToken       string
 }
 
 func Load() (Config, error) {
@@ -18,6 +19,7 @@ func Load() (Config, error) {
 		ManifestURL:             envOrDefault("MANIFEST_URL", "http://ai-manager:80/manifest.json"),
 		ManifestPollingInterval: 5 * time.Minute,
 		Debug:                   envBool("DEBUG"),
+		OpenAIBearerToken:       strings.TrimSpace(os.Getenv("OPENAI_BEARER_TOKEN")),
 	}
 
 	intervalRaw := strings.TrimSpace(os.Getenv("MANIFEST_POLLING_INTERVAL"))

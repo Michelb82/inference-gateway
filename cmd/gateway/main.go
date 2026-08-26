@@ -18,7 +18,7 @@ import (
 	"github.com/mywebsite/construction-ai-gateway/internal/config"
 	"github.com/mywebsite/construction-ai-gateway/internal/configmgmt"
 	"github.com/mywebsite/construction-ai-gateway/internal/health"
-	"github.com/mywebsite/construction-ai-gateway/internal/ollama"
+	"github.com/mywebsite/construction-ai-gateway/internal/inference"
 	"github.com/mywebsite/construction-ai-gateway/internal/openai"
 	"github.com/mywebsite/construction-ai-gateway/internal/queue"
 	"github.com/mywebsite/construction-ai-gateway/internal/worker"
@@ -59,7 +59,7 @@ func main() {
 
 	registryHolder := capability.NewHolder()
 	overridePolicy := capability.NewOverridePolicyHolder()
-	llmPool := ollama.NewPool()
+	llmPool := inference.NewRouter(cfg.OpenAIBearerToken)
 	plane := &dataPlane{
 		parent:         ctx,
 		registry:       registryHolder,
@@ -97,6 +97,7 @@ func main() {
 		"manifest_polling_interval", cfg.ManifestPollingInterval.String(),
 		"configured", mgr.HasSnapshot(),
 		"debug", cfg.Debug,
+		"openai_vendor", llmPool.OpenAIEnabled(),
 	)
 
 	<-ctx.Done()
@@ -115,7 +116,7 @@ type dataPlane struct {
 	parent         context.Context
 	registry       *capability.Holder
 	overridePolicy *capability.OverridePolicyHolder
-	llmPool        *ollama.Pool
+	llmPool        *inference.Router
 	logger         *slog.Logger
 
 	mu       sync.Mutex
@@ -134,6 +135,7 @@ func (d *dataPlane) Apply(snap configmgmt.Snapshot, first bool) error {
 	bindings := make(map[string]capability.ModelBinding, len(snap.Bindings))
 	for name, binding := range snap.Bindings {
 		bindings[name] = capability.ModelBinding{
+			Vendor:        binding.Vendor,
 			BaseURL:       binding.BaseURL,
 			Model:         binding.Model,
 			KeepAlive:     binding.KeepAlive,
@@ -169,9 +171,9 @@ func (d *dataPlane) Apply(snap configmgmt.Snapshot, first bool) error {
 	}
 
 	// Verify models before any live swap so a failure leaves the data plane untouched.
-	targets := make([]ollama.ModelTarget, 0, len(reg.All()))
+	targets := make([]inference.ModelTarget, 0, len(reg.All()))
 	for _, def := range reg.All() {
-		targets = append(targets, ollama.ModelTarget{BaseURL: def.BaseURL, Name: def.Model})
+		targets = append(targets, inference.ModelTarget{Vendor: def.Vendor, BaseURL: def.BaseURL, Name: def.Model})
 	}
 	d.logger.Info("ensuring llm models", "targets", targets)
 	availableModels, unavailableModels, err := d.llmPool.EnsureModels(d.parent, targets)
@@ -189,6 +191,15 @@ func (d *dataPlane) Apply(snap configmgmt.Snapshot, first bool) error {
 		)
 	} else {
 		d.logger.Info("llm models ready", "available", availableModels)
+	}
+
+	d.llmPool.RefreshProbes(d.parent, targets, 0)
+	if !d.llmPool.AnyChatOK(targets) {
+		if newRedis != nil {
+			_ = newRedis.Close()
+		}
+		d.logger.Error("llm chat probe failed", "targets", targets)
+		return fmt.Errorf("llm chat probe failed: no endpoint responded")
 	}
 
 	// Abort before live mutation if the process is shutting down.
@@ -237,7 +248,7 @@ func (d *dataPlane) Apply(snap configmgmt.Snapshot, first bool) error {
 		workerCtx, cancel := context.WithCancel(d.parent)
 		d.cancel = cancel
 		d.done = make(chan struct{})
-		appWorker := worker.New(eventQueue, eventQueue, d.llmPool, d.llmPool, d.registry, d.overridePolicy, d.logger)
+		appWorker := worker.New(eventQueue, eventQueue, d.llmPool, d.registry, d.overridePolicy, d.logger)
 		go func() {
 			defer close(d.done)
 			worker.Supervise(workerCtx, appWorker.Run, d.logger, time.Second)

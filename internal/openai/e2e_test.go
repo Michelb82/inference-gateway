@@ -13,6 +13,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/mywebsite/construction-ai-gateway/internal/capability"
 	"github.com/mywebsite/construction-ai-gateway/internal/cloudevent"
+	"github.com/mywebsite/construction-ai-gateway/internal/inference"
 	"github.com/mywebsite/construction-ai-gateway/internal/queue"
 	"github.com/mywebsite/construction-ai-gateway/internal/worker"
 	"github.com/redis/go-redis/v9"
@@ -158,7 +159,7 @@ func newE2E(t *testing.T, byPrompt map[string]string) (*http.ServeMux, *e2eOllam
 	)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	w := worker.New(q, q, ollama, &e2eModels{available: true}, reg, nil, nil)
+	w := worker.New(q, q, ollama, reg, nil, nil)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -189,30 +190,22 @@ type e2eOllama struct {
 	called    bool
 }
 
-func (f *e2eOllama) Complete(ctx context.Context, baseURL, systemPrompt, prompt, model, keepAlive string) (string, error) {
+func (f *e2eOllama) Complete(ctx context.Context, req inference.CompleteRequest) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.called = true
-	f.prompt = prompt
-	f.model = model
+	f.prompt = req.Prompt
+	f.model = req.Model
 	if f.byPrompt != nil {
-		if v, ok := f.byPrompt[prompt]; ok {
+		if v, ok := f.byPrompt[req.Prompt]; ok {
 			return v, nil
 		}
 	}
-	if f.routing != "" && model == "qwen3:1.7b-q4_K_M" {
+	if f.routing != "" && req.Model == "qwen3:1.7b-q4_K_M" {
 		return f.routing, nil
 	}
-	if f.translate != "" && model == "qwen3:14b-q4_K_M" {
+	if f.translate != "" && req.Model == "qwen3:14b-q4_K_M" {
 		return f.translate, nil
 	}
 	return f.fallback, nil
-}
-
-type e2eModels struct {
-	available bool
-}
-
-func (f *e2eModels) ModelAvailable(ctx context.Context, baseURL, name string) (bool, error) {
-	return f.available, nil
 }
