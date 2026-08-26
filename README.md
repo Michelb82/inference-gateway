@@ -8,6 +8,7 @@ Standalone Go service that exposes AI capabilities over an OpenAI-compatible HTT
 - Internal work queue (Redis): `queue:ai.requests` plus priority lanes `queue:ai.requests:critical|high|medium|low`
 - Internal responses: `queue:ai.responses` and per-request `queue:ai.responses:{id}`
 - Built-in capabilities (gateway code): `routing`, `intent-classification`, `translate`
+- Inference runtimes: **two** vendors — `ollama` and `openai`. Only vendors bound in the applied manifest are active; Ollama does not need to run unless the manifest uses it.
 - Health: `GET /health` (HTML), `GET /health.json` (JSON) on port 80
 - Docker network: `dev` (external)
 
@@ -25,7 +26,8 @@ POST /v1/chat/completions   (model = capability id)
 Gateway HTTP adapter  →  internal CloudEvent  →  Redis work queue
    │                                              (priority lanes)
    │                                                      │
-   │                                              Worker + Ollama
+   │                                              Worker + inference vendors
+   │                                              (ollama / openai)
    │                                                      │
    ◄──────── wait on queue:ai.responses:{id} ◄────────────┘
    │
@@ -39,7 +41,7 @@ Optional extra field `priority` on each request selects a processing lane: `CRIT
 
 ### Configuration management
 
-Runtime configuration (models, capability→model bindings, input character limits, Redis **internal** queue, CloudEvent prefix, priority fairness) comes from a **manifest**, not from `.env`. The manifest is an ops/bindings document: capability prompts, I/O shapes, and parsers live in gateway code (`internal/capability`). `capability_models` must bind exactly the built-in capability ids.
+Runtime configuration (inference endpoints, capability→endpoint bindings, input character limits, Redis **internal** queue, CloudEvent prefix, priority fairness) comes from a **manifest**, not from `.env` (except `OPENAI_BEARER_TOKEN`). The manifest is an ops/bindings document: capability prompts, I/O shapes, and parsers live in gateway code (`internal/capability`). `capability_models` must bind exactly the built-in capability ids.
 
 - **Primary path:** poll `MANIFEST_URL` every `MANIFEST_POLLING_INTERVAL`. Until a valid manifest is applied, the gateway stays **dormant** (process up, health reports `dormant`, OpenAI endpoints return 503, no Redis consumer / capability work).
 - **Optional local file:** `--manifest /path/to/manifest.json` is for development, tests, or experimental setups only. It is **not** required to boot. If the flag is set, the file must be valid or startup exits.
@@ -52,7 +54,7 @@ For planned control-plane / data-plane separation (Ingress, Orchestration, Polic
 
 ## Prerequisites
 
-1. Start the sibling construction stack so Redis and Ollama (`llm-model` / `foundation-model`) are available on the shared Docker network.
+1. Start the sibling construction stack so Redis is available on the shared Docker network. Start Ollama (`llm-model` / `foundation-model`) only if the manifest binds `vendor: ollama`. An OpenAI-only manifest does not need Ollama.
 
 2. Ensure the `dev` network exists:
 
@@ -60,18 +62,18 @@ For planned control-plane / data-plane separation (Ingress, Orchestration, Polic
 docker network ls | grep dev
 ```
 
-3. For local/dev, provide a manifest (see below). On apply the gateway checks each capability’s LLM URL and pulls any missing configured models. **Redis must be reachable when a manifest is applied** (apply fails and the previous snapshot is kept, or the gateway stays dormant). Models are best-effort: if at least one configured model is available on its LLM, apply continues and missing models are logged as warnings; apply fails only when none are available.
+3. For local/dev, provide a manifest (see below). On apply the gateway checks each **bound** capability’s inference URL (only vendors present in the applied manifest). For Ollama it pulls any missing configured models. **Redis must be reachable when a manifest is applied** (apply fails and the previous snapshot is kept, or the gateway stays dormant). Models are best-effort: if at least one configured endpoint is available, apply continues and missing models are logged as warnings; apply fails only when none are available. Ollama is not contacted when no rank-0 binding uses `vendor: ollama`.
 
 ## Run locally in Docker
 
 ```bash
 cp .env.dist .env
 cp manifest.json.dist manifest.json
-# Edit .env / manifest.json for private hostnames or CloudEvent prefixes.
+# Edit .env / manifest.json for private hostnames, CloudEvent prefixes, or the OpenAI catalog url.
 docker compose up --build
 ```
 
-Health and OpenAI endpoints are published on host port `18080` by default (`http://localhost:18080/health`, `/health.json`, `/v1/models`, `/v1/chat/completions`).
+Health and OpenAI endpoints are published on host port `18080` by default (`http://localhost:18080/health`, `/health.json`, `/v1/models`, `/v1/chat/completions`). Set `OPENAI_BEARER_TOKEN` in `.env` to enable the OpenAI vendor. Ollama-bound capabilities do not need that token, and Ollama is not contacted unless the applied manifest binds `vendor: ollama`.
 
 ## Configuration
 
@@ -84,36 +86,83 @@ Copy `.env.dist` to `.env`. These variables only configure how manifests are dis
 | `MANIFEST_URL` | `http://ai-manager:80/manifest.json` |
 | `MANIFEST_POLLING_INTERVAL` | `5m` |
 | `DEBUG` | `false` |
+| `OPENAI_BEARER_TOKEN` | empty (OpenAI vendor disabled) |
 
-When `DEBUG=true`, the logger also emits Debug-level full Redis and Ollama payloads (`incoming/outgoing traffic payload`, `ollama incoming` / `ollama outgoing`) and appends the same JSON logs to `debug.log`.
+When `DEBUG=true`, the logger also emits Debug-level full Redis and Ollama/OpenAI payloads (`incoming/outgoing traffic payload`, `ollama incoming` / `ollama outgoing`, `openai incoming` / `openai outgoing`) and appends the same JSON logs to `debug.log`. The Bearer token is never logged.
 
-### Manifest (`manifest.json`)
+### Inference runtime vendors
 
-Copy `manifest.json.dist` to `manifest.json` for local/dev. Public defaults use placeholder names (`llm-model`, `com.mywebsite.ai`). Local private copies may use deploy-specific hostnames (for example `foundation-model`) and CloudEvent prefixes.
+There are **two** inference runtime vendors. Ingest is always OpenAI Chat Completions; egress follows `inference_endpoint[].vendor` on the bound catalog id.
 
-| Field | Purpose |
-|-------|---------|
-| `models` | Catalog entries with `id`, `url`, `model` (Ollama name), `keep_alive_seconds` |
-| `capability_models` | Bindings for each built-in capability (`routing`, `intent-classification`, `translate`): ranked list of model `id`s (rank `0` is used today; higher ranks are reserved for failover). Optional `max_input_chars` on rank `0` (defaults: routing `200`, intent-classification `8000`, translate `16000`). Unknown capability keys are rejected. |
-| `ingress` | Internal Redis work queue: adapter, address, ingress/egress channels, BRPOP timeout. Not the producer contract. |
-| `config` | Internal CloudEvent `message_prefix`, `http_address`, priority fairness counts, optional `max_system_prompt_chars` (default `4000`), optional `system_prompt_override_orgs` (default empty / deny all) |
+The worker talks to an inference **port**. Only vendors present in the applied rank-0 bindings are probed or used:
 
-Example (trimmed):
+| `inference_endpoint[].vendor` | Runtime | Notes |
+|-------------------------------|---------|--------|
+| `ollama` | Ollama | Chat Completions plus `/api/tags` / `/api/pull`. Required only when the manifest binds this vendor. |
+| `openai` | OpenAI-compatible HTTP | [OpenAI OpenAPI](https://github.com/openai/openai-openapi): `POST /v1/chat/completions`, `GET /v1/models`, `Authorization: Bearer` |
+
+`vendor` is required (`ollama` or `openai`). The OpenAI vendor is **off** unless `OPENAI_BEARER_TOKEN` is set. Without a token, OpenAI-bound endpoints stay unavailable; Ollama-bound capabilities still work. If nothing is bound to `ollama`, Ollama does not need to run and is never health-checked.
+
+Example catalog entries:
 
 ```json
 {
-  "models": [
+  "id": "qwen3:1.7b",
+  "vendor": "ollama",
+  "url": "http://llm-model:11434",
+  "model": "qwen3:1.7b-q4_K_M",
+  "keep_alive_seconds": 300
+}
+```
+
+```json
+{
+  "id": "openai",
+  "vendor": "openai",
+  "url": "https://someurl",
+  "model": null,
+  "keep_alive_seconds": 300
+}
+```
+
+`url` is a base URL. The OpenAI vendor appends `/v1/chat/completions` and `/v1/models`. When `model` is `null`, the outbound Chat Completions body omits `model`.
+
+### Manifest (`manifest.json`)
+
+Copy `manifest.json.dist` to `manifest.json` for local/dev. Public defaults use placeholder names (`llm-model`, `com.mywebsite.ai`) and an OpenAI catalog entry (`id` `openai`, `url` `https://someurl`, `model` `null`). Rank 0 stays on Ollama so the stack applies without a Bearer token. To send a capability to OpenAI, set that capability’s rank 0 `model` to `"openai"`, point `url` at the real base URL, and set `OPENAI_BEARER_TOKEN`. Local private copies may use deploy-specific hostnames (for example `foundation-model`) and CloudEvent prefixes.
+
+| Field | Purpose |
+|-------|---------|
+| `inference_endpoint` | Catalog entries with `id`, required `vendor` (`ollama` or `openai`), `url` (base URL), `model` (runtime model name; required for Ollama, nullable for OpenAI), `keep_alive_seconds` (required for Ollama; optional for OpenAI) |
+| `capability_models` | Bindings for each built-in capability (`routing`, `intent-classification`, `translate`): ranked list of catalog `id`s (rank `0` is used today; higher ranks are reserved for failover). Optional `max_input_chars` on rank `0` (defaults: routing `200`, intent-classification `8000`, translate `16000`). Unknown capability keys are rejected. |
+| `ingress` | Internal Redis work queue: adapter, address, ingress/egress channels, BRPOP timeout. Not the producer contract. |
+| `config` | Internal CloudEvent `message_prefix`, `http_address`, priority fairness counts, optional `max_system_prompt_chars` (default `4000`), optional `system_prompt_override_orgs` (default empty / deny all) |
+
+Example (trimmed; `manifest.json.dist` also catalogs the larger Ollama models):
+
+```json
+{
+  "inference_endpoint": [
     {
       "id": "qwen3:1.7b",
+      "vendor": "ollama",
       "url": "http://llm-model:11434",
       "model": "qwen3:1.7b-q4_K_M",
+      "keep_alive_seconds": 300
+    },
+    {
+      "id": "openai",
+      "vendor": "openai",
+      "url": "https://someurl",
+      "model": null,
       "keep_alive_seconds": 300
     }
   ],
   "capability_models": {
     "routing": [
       {"rank": 0, "model": "qwen3:1.7b", "max_input_chars": 200},
-      {"rank": 1, "model": "qwen3:4b"}
+      {"rank": 1, "model": "qwen3:4b"},
+      {"rank": 2, "model": "openai"}
     ]
   },
   "ingress": {
@@ -242,6 +291,8 @@ Status values:
 - Per capability: `available` / `unavailable` (omitted while dormant)
 
 HTTP status is `200` when ready and `503` when not ready or dormant. Model names appear only on health endpoints (ops), not on successful OpenAI completions.
+
+`GET /health` and `/health.json` refresh each unique inference endpoint at most hourly: one catalog list (`GET /v1/models` or Ollama `GET /api/tags`) and one short chat ping. Manifest apply always refreshes. Overall `ready` follows chat ping success. A configured `model` missing from the catalog is a `warning` only; the capability stays `available` and HTTP remains **200**. Chat ping failure makes the capability `unavailable` and overall `not_ready` (**503**).
 
 ## Manual smoke test
 

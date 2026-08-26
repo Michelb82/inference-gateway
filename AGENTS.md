@@ -26,7 +26,7 @@ cp .githooks/pre-commit .git/hooks/pre-commit
 On **every feature request** (new capability, enhancement, refactor with user-visible/architectural impact, or hardening follow-up):
 
 1. **Create** a new file `feature/gw-<N>.md` before or with the implementation.
-2. Choose `<N>` as the next unused integer after existing `feature/gw-*.md` files (currently through `gw-3`).
+2. Choose `<N>` as the next unused integer after existing `feature/gw-*.md` files (currently through `gw-6`).
 3. **Include that file in the same commit(s)** as the feature work. Do not ship code without the matching `feature/gw-*.md`.
 4. Do not skip this for “small” features. Only omit it for pure typo/docs-only edits that do not introduce a feature.
 

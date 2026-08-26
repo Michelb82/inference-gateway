@@ -5,36 +5,44 @@ import (
 	"strings"
 
 	"github.com/mywebsite/construction-ai-gateway/internal/capability"
+	"github.com/mywebsite/construction-ai-gateway/internal/inference"
 )
 
 // Validate checks structural and referential integrity of a manifest.
 // Known capability ids come from the capability package; the manifest only
-// binds models (and ops settings) to those ids via capability_models.
+// binds endpoints (and ops settings) to those ids via capability_models.
 func Validate(m Manifest) error {
 	known := capability.Known()
 
-	if len(m.Models) == 0 {
-		return fmt.Errorf("manifest.models must not be empty")
+	if len(m.InferenceEndpoint) == 0 {
+		return fmt.Errorf("manifest.inference_endpoint must not be empty")
 	}
-	modelsByID := make(map[string]Model, len(m.Models))
-	for i, model := range m.Models {
-		id := strings.TrimSpace(model.ID)
+	endpointsByID := make(map[string]Endpoint, len(m.InferenceEndpoint))
+	for i, endpoint := range m.InferenceEndpoint {
+		id := strings.TrimSpace(endpoint.ID)
 		if id == "" {
-			return fmt.Errorf("manifest.models[%d].id must not be blank", i)
+			return fmt.Errorf("manifest.inference_endpoint[%d].id must not be blank", i)
 		}
-		if strings.TrimSpace(model.URL) == "" {
-			return fmt.Errorf("manifest.models[%d].url must not be blank", i)
+		if strings.TrimSpace(endpoint.URL) == "" {
+			return fmt.Errorf("manifest.inference_endpoint[%d].url must not be blank", i)
 		}
-		if strings.TrimSpace(model.Model) == "" {
-			return fmt.Errorf("manifest.models[%d].model must not be blank", i)
+		vendor, err := inference.ParseVendor(endpoint.Vendor)
+		if err != nil {
+			return fmt.Errorf("manifest.inference_endpoint[%d].vendor: %w", i, err)
 		}
-		if model.KeepAliveSeconds < 1 {
-			return fmt.Errorf("manifest.models[%d].keep_alive_seconds must be >= 1", i)
+		if vendor == inference.VendorOllama && strings.TrimSpace(endpoint.Model) == "" {
+			return fmt.Errorf("manifest.inference_endpoint[%d].model must not be blank", i)
 		}
-		if _, dup := modelsByID[id]; dup {
-			return fmt.Errorf("manifest.models duplicates id %q", id)
+		if vendor == inference.VendorOllama && endpoint.KeepAliveSeconds < 1 {
+			return fmt.Errorf("manifest.inference_endpoint[%d].keep_alive_seconds must be >= 1", i)
 		}
-		modelsByID[id] = model
+		if endpoint.KeepAliveSeconds < 0 {
+			return fmt.Errorf("manifest.inference_endpoint[%d].keep_alive_seconds must be >= 0", i)
+		}
+		if _, dup := endpointsByID[id]; dup {
+			return fmt.Errorf("manifest.inference_endpoint duplicates id %q", id)
+		}
+		endpointsByID[id] = endpoint
 	}
 
 	if len(m.CapabilityModels) == 0 {
@@ -64,7 +72,7 @@ func Validate(m Manifest) error {
 			if modelID == "" {
 				return fmt.Errorf("manifest.capability_models[%q][%d].model must not be blank", required, j)
 			}
-			if _, ok := modelsByID[modelID]; !ok {
+			if _, ok := endpointsByID[modelID]; !ok {
 				return fmt.Errorf("manifest.capability_models[%q] references unknown model id %q", required, modelID)
 			}
 			if ref.MaxInputChars < 0 {

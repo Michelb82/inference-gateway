@@ -9,6 +9,7 @@ import (
 
 	"github.com/mywebsite/construction-ai-gateway/internal/capability"
 	"github.com/mywebsite/construction-ai-gateway/internal/cloudevent"
+	"github.com/mywebsite/construction-ai-gateway/internal/inference"
 )
 
 type RequestConsumer interface {
@@ -20,11 +21,7 @@ type ResponsePublisher interface {
 }
 
 type ChatCompleter interface {
-	Complete(ctx context.Context, baseURL, systemPrompt, prompt, model, keepAlive string) (string, error)
-}
-
-type ModelChecker interface {
-	ModelAvailable(ctx context.Context, baseURL, name string) (bool, error)
+	Complete(ctx context.Context, req inference.CompleteRequest) (string, error)
 }
 
 type CapabilityResolver interface {
@@ -39,7 +36,6 @@ type Worker struct {
 	consumer       RequestConsumer
 	publisher      ResponsePublisher
 	ollama         ChatCompleter
-	models         ModelChecker
 	registry       CapabilityResolver
 	overridePolicy OverridePolicySource
 	logger         *slog.Logger
@@ -49,7 +45,6 @@ func New(
 	consumer RequestConsumer,
 	publisher ResponsePublisher,
 	ollama ChatCompleter,
-	models ModelChecker,
 	registry CapabilityResolver,
 	overridePolicy OverridePolicySource,
 	logger *slog.Logger,
@@ -64,7 +59,6 @@ func New(
 		consumer:       consumer,
 		publisher:      publisher,
 		ollama:         ollama,
-		models:         models,
 		registry:       registry,
 		overridePolicy: overridePolicy,
 		logger:         logger,
@@ -140,31 +134,19 @@ func (w *Worker) handle(ctx context.Context, event *cloudevent.Event) error {
 		overrideAuthorized = true
 	}
 
-	available, err := w.models.ModelAvailable(ctx, def.BaseURL, def.Model)
-	if err != nil {
-		w.logger.Error("model availability check failed",
-			"capability", capabilityName,
-			"llm_url", def.BaseURL,
-			"model", def.Model,
-			"error", err,
-		)
-		return w.publishFailure(ctx, event, capabilityName, fmt.Errorf("model unavailable: %v", err))
-	}
-	if !available {
-		w.logger.Error("model unavailable",
-			"capability", capabilityName,
-			"llm_url", def.BaseURL,
-			"model", def.Model,
-		)
-		return w.publishFailure(ctx, event, capabilityName, fmt.Errorf("model unavailable: %s is not present on %s", def.Model, def.BaseURL))
-	}
-
 	systemPrompt, userPrompt, err := capability.BuildPrompts(def, input)
 	if err != nil {
 		return w.publishFailure(ctx, event, capabilityName, err)
 	}
 
-	raw, err := w.ollama.Complete(ctx, def.BaseURL, systemPrompt, userPrompt, def.Model, def.KeepAlive)
+	raw, err := w.ollama.Complete(ctx, inference.CompleteRequest{
+		Vendor:       def.Vendor,
+		BaseURL:      def.BaseURL,
+		SystemPrompt: systemPrompt,
+		Prompt:       userPrompt,
+		Model:        def.Model,
+		KeepAlive:    def.KeepAlive,
+	})
 	if err != nil {
 		return w.publishFailure(ctx, event, capabilityName, err)
 	}

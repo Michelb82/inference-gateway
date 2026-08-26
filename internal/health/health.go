@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mywebsite/construction-ai-gateway/internal/capability"
+	"github.com/mywebsite/construction-ai-gateway/internal/inference"
 )
 
 const (
@@ -20,8 +21,9 @@ const (
 	StatusUnavailable = "unavailable"
 )
 
-type ModelChecker interface {
-	ModelAvailable(ctx context.Context, baseURL, name string) (bool, error)
+type ProbeSource interface {
+	RefreshProbes(ctx context.Context, targets []inference.ModelTarget, maxAge time.Duration)
+	Probe(vendor, baseURL string) (inference.EndpointProbe, bool)
 }
 
 type CapabilityLister interface {
@@ -31,8 +33,10 @@ type CapabilityLister interface {
 type CapabilityStatus struct {
 	Capability string `json:"capability"`
 	Status     string `json:"status"`
+	Vendor     string `json:"vendor,omitempty"`
 	URL        string `json:"url"`
 	Model      string `json:"model"`
+	Warning    string `json:"warning,omitempty"`
 	Error      string `json:"error,omitempty"`
 }
 
@@ -43,13 +47,13 @@ type Report struct {
 
 type Handler struct {
 	registry CapabilityLister
-	models   ModelChecker
+	probes   ProbeSource
 }
 
-func NewHandler(registry CapabilityLister, models ModelChecker) *Handler {
+func NewHandler(registry CapabilityLister, probes ProbeSource) *Handler {
 	return &Handler{
 		registry: registry,
-		models:   models,
+		probes:   probes,
 	}
 }
 
@@ -91,26 +95,47 @@ func (h *Handler) buildReport(ctx context.Context) Report {
 		}
 	}
 
+	targets := make([]inference.ModelTarget, 0, len(defs))
+	for _, def := range defs {
+		targets = append(targets, inference.ModelTarget{
+			Vendor:  def.Vendor,
+			BaseURL: def.BaseURL,
+			Name:    def.Model,
+		})
+	}
+	h.probes.RefreshProbes(ctx, targets, inference.ProbeTTL)
+
 	statuses := make([]CapabilityStatus, 0, len(defs))
 	overall := StatusReady
 
 	for _, def := range defs {
 		status := CapabilityStatus{
 			Capability: def.Name,
+			Vendor:     inference.NormalizeVendor(def.Vendor),
 			URL:        def.BaseURL,
 			Model:      def.Model,
 			Status:     StatusAvailable,
 		}
 
-		available, err := h.models.ModelAvailable(ctx, def.BaseURL, def.Model)
-		if err != nil {
+		probe, ok := h.probes.Probe(def.Vendor, def.BaseURL)
+		if !ok || !probe.ChatOK {
 			status.Status = StatusUnavailable
-			status.Error = err.Error()
 			overall = StatusNotReady
-		} else if !available {
-			status.Status = StatusUnavailable
-			status.Error = "model not found on Ollama"
-			overall = StatusNotReady
+			if !ok {
+				status.Error = "no probe result"
+			} else if probe.ChatErr != nil {
+				status.Error = probe.ChatErr.Error()
+			} else {
+				status.Error = "chat ping failed"
+			}
+		}
+
+		if ok {
+			if probe.CatalogErr != nil {
+				status.Warning = inference.WarningCatalogUnavailable()
+			} else if strings.TrimSpace(def.Model) != "" && !probe.CatalogContains(def.Model) {
+				status.Warning = inference.WarningModelNotListed(def.Model)
+			}
 		}
 
 		statuses = append(statuses, status)
@@ -142,12 +167,17 @@ func renderHTML(report Report) string {
 	}
 
 	for _, item := range report.Capabilities {
-		b.WriteString(fmt.Sprintf("<div id=\"%s\">%s: <span style=\"color: %s\">%s</span></div>\n",
+		line := fmt.Sprintf("<div id=\"%s\">%s: <span style=\"color: %s\">%s</span>",
 			html.EscapeString(item.Capability),
 			html.EscapeString(item.Capability),
 			colorFor(item.Status),
 			html.EscapeString(item.Status),
-		))
+		)
+		if item.Warning != "" {
+			line += fmt.Sprintf(" <span class=\"warning\">%s</span>", html.EscapeString(item.Warning))
+		}
+		line += "</div>\n"
+		b.WriteString(line)
 	}
 
 	b.WriteString("</body>\n</html>\n")

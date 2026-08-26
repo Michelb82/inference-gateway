@@ -29,6 +29,7 @@ func TestLoadOverrides(t *testing.T) {
 	t.Setenv("MANIFEST_URL", "http://manager:8080/manifest.json")
 	t.Setenv("MANIFEST_POLLING_INTERVAL", "30s")
 	t.Setenv("DEBUG", "true")
+	t.Setenv("OPENAI_BEARER_TOKEN", "sk-test")
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -42,6 +43,9 @@ func TestLoadOverrides(t *testing.T) {
 	}
 	if !cfg.Debug {
 		t.Fatalf("Debug = false, want true")
+	}
+	if cfg.OpenAIBearerToken != "sk-test" {
+		t.Fatalf("OpenAIBearerToken = %q", cfg.OpenAIBearerToken)
 	}
 }
 
@@ -66,7 +70,7 @@ func TestLoadInvalidPollingInterval(t *testing.T) {
 
 func clearEnv(t *testing.T) {
 	t.Helper()
-	for _, key := range []string{"MANIFEST_URL", "MANIFEST_POLLING_INTERVAL", "DEBUG"} {
+	for _, key := range []string{"MANIFEST_URL", "MANIFEST_POLLING_INTERVAL", "DEBUG", "OPENAI_BEARER_TOKEN"} {
 		t.Setenv(key, "")
 	}
 }

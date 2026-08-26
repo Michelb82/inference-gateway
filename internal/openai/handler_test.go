@@ -14,6 +14,7 @@ import (
 	"github.com/mywebsite/construction-ai-gateway/internal/capability"
 	"github.com/mywebsite/construction-ai-gateway/internal/cloudevent"
 	"github.com/mywebsite/construction-ai-gateway/internal/health"
+	"github.com/mywebsite/construction-ai-gateway/internal/inference"
 	"github.com/mywebsite/construction-ai-gateway/internal/queue"
 )
 
@@ -237,7 +238,7 @@ func TestHandleCompletionsWaitOtherError(t *testing.T) {
 
 func TestSharedMuxHealthAndCompletions(t *testing.T) {
 	mux := http.NewServeMux()
-	health.NewHandler(capability.NewHolder(), &healthModels{}).Register(mux)
+	health.NewHandler(capability.NewHolder(), &healthProbes{}).Register(mux)
 	NewHandler(staticSource{}, nil).Register(mux)
 
 	healthRec := httptest.NewRecorder()
@@ -253,10 +254,13 @@ func TestSharedMuxHealthAndCompletions(t *testing.T) {
 	}
 }
 
-type healthModels struct{}
+type healthProbes struct{}
 
-func (healthModels) ModelAvailable(ctx context.Context, baseURL, name string) (bool, error) {
-	return false, nil
+func (healthProbes) RefreshProbes(ctx context.Context, targets []inference.ModelTarget, maxAge time.Duration) {
+}
+
+func (healthProbes) Probe(vendor, baseURL string) (inference.EndpointProbe, bool) {
+	return inference.EndpointProbe{}, false
 }
 
 func assertOpenAIError(t *testing.T, rec *httptest.ResponseRecorder, code string) {

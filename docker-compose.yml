@@ -12,6 +12,7 @@ services:
       MANIFEST_URL: ${MANIFEST_URL:-http://ai-manager:80/manifest.json}
       MANIFEST_POLLING_INTERVAL: ${MANIFEST_POLLING_INTERVAL:-5m}
       DEBUG: ${DEBUG:-false}
+      OPENAI_BEARER_TOKEN: ${OPENAI_BEARER_TOKEN:-}
     command: ["--manifest", "/app/manifest.json"]
     volumes:
       - ./manifest.json:/app/manifest.json:ro

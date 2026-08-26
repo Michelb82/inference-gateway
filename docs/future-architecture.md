@@ -341,6 +341,11 @@ The runtime is deliberately hidden behind the Inference Gateway.
 
 Neither the consumer nor Orchestration should need to know which runtime is being used.
 
+The gateway talks to runtimes through an inference **port**. There are **two** vendors:
+
+* **Ollama** — local/self-hosted models, including pull of missing models. Active only when the applied manifest binds `vendor: ollama`. Ollama does not need to run otherwise and is not health-checked.
+* **OpenAI API** — OpenAI OpenAPI Chat Completions + Models list; `Authorization: Bearer` from `OPENAI_BEARER_TOKEN`. Without a token this vendor cannot be used. Example base URL: `"url": "https://someurl"`.
+
 Conceptually:
 
 ```text
@@ -349,7 +354,7 @@ Conceptually:
                   ┌─────────────┴─────────────┐
                   │                           │
                   ▼                           ▼
-              Ollama                         vLLM
+         Ollama vendor               OpenAI API vendor
                   │                           │
                   └─────────────┬─────────────┘
                                 ▼
@@ -498,7 +503,7 @@ Inference Gateway HTTP adapter
 Internal Redis CloudEvent queue
    │
    ▼
-Worker → Inference Runtime (Ollama OpenAI /v1/chat/completions)
+Worker → Inference Runtime (Ollama vendor or OpenAI API vendor)
    │
    ▼
 Correlated HTTP response  (chat.completion)
