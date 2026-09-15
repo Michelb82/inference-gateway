@@ -44,6 +44,13 @@ func main() {
 		os.Exit(1)
 	}
 
+	bootstrap.Info("configuration sources",
+		"bootstrap_config_source", "process environment with built-in defaults",
+		"local_manifest_path", *manifestPath,
+		"remote_manifest_url", cfg.ManifestURL,
+		"remote_manifest_polling_interval", cfg.ManifestPollingInterval.String(),
+	)
+
 	logger, debugFile, err := newLogger(cfg.Debug)
 	if err != nil {
 		bootstrap.Error("failed to set up logger", "error", err)

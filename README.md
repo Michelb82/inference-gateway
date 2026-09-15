@@ -88,6 +88,8 @@ Copy `.env.dist` to `.env`. These variables only configure how manifests are dis
 | `DEBUG` | `false` |
 | `OPENAI_BEARER_TOKEN` | empty (OpenAI vendor disabled) |
 
+At startup, an INFO JSON record named `configuration sources` is written to stdout before logger setup and manifest loading. It identifies the process environment (with built-in defaults), the optional `--manifest` local path (empty when absent), and the remote manifest URL and polling interval. Remote polling remains enabled when a local manifest is supplied. The gateway reads environment variables directly; Docker Compose supplies values from `.env`. This record does not dump configuration values or the bearer token.
+
 When `DEBUG=true`, the logger also emits Debug-level full Redis and Ollama/OpenAI payloads (`incoming/outgoing traffic payload`, `ollama incoming` / `ollama outgoing`, `openai incoming` / `openai outgoing`) and appends the same JSON logs to `debug.log`. The Bearer token is never logged.
 
 ### Inference runtime vendors
