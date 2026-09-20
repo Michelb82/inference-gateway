@@ -11,6 +11,24 @@ const (
 	VendorOpenAI = "openai"
 )
 
+// VendorSupport describes one inference runtime accepted by manifests.
+// This is also the source used by the management discovery endpoint.
+type VendorSupport struct {
+	ID                      string `json:"id"`
+	Protocol                string `json:"protocol"`
+	RequiresBearerToken     bool   `json:"requires_bearer_token"`
+	ModelRequired           bool   `json:"model_required"`
+	KeepAliveSecondsMinimum int    `json:"keep_alive_seconds_minimum"`
+}
+
+// SupportedVendors returns manifest vendor support in stable order.
+func SupportedVendors() []VendorSupport {
+	return []VendorSupport{
+		{ID: VendorOllama, Protocol: "ollama", ModelRequired: true, KeepAliveSecondsMinimum: 1},
+		{ID: VendorOpenAI, Protocol: "openai-compatible", RequiresBearerToken: true},
+	}
+}
+
 // ModelTarget is a model hosted at a specific runtime base URL.
 type ModelTarget struct {
 	Vendor  string
@@ -42,16 +60,15 @@ type Runtime interface {
 // ParseVendor validates a manifest vendor name. Blank is rejected.
 func ParseVendor(raw string) (string, error) {
 	name := strings.ToLower(strings.TrimSpace(raw))
-	switch name {
-	case VendorOllama:
-		return VendorOllama, nil
-	case VendorOpenAI:
-		return VendorOpenAI, nil
-	case "":
+	if name == "" {
 		return "", fmt.Errorf("inference vendor must not be blank")
-	default:
-		return "", fmt.Errorf("unsupported inference vendor %q", raw)
 	}
+	for _, vendor := range SupportedVendors() {
+		if name == vendor.ID {
+			return vendor.ID, nil
+		}
+	}
+	return "", fmt.Errorf("unsupported inference vendor %q", raw)
 }
 
 // NormalizeVendor returns a lowercase vendor name. Invalid values are returned

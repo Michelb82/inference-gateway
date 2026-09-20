@@ -20,6 +20,7 @@ import (
 	"github.com/mywebsite/construction-ai-gateway/internal/health"
 	"github.com/mywebsite/construction-ai-gateway/internal/inference"
 	gatewaylogging "github.com/mywebsite/construction-ai-gateway/internal/logging"
+	"github.com/mywebsite/construction-ai-gateway/internal/management"
 	"github.com/mywebsite/construction-ai-gateway/internal/openai"
 	"github.com/mywebsite/construction-ai-gateway/internal/queue"
 	tooldef "github.com/mywebsite/construction-ai-gateway/internal/tool"
@@ -85,6 +86,7 @@ func main() {
 	mux := http.NewServeMux()
 	healthHandler.Register(mux)
 	openaiHandler.Register(mux)
+	management.Register(mux)
 	httpServer := health.NewHTTPServer(defaultHTTPAddr, mux)
 
 	go func() {
