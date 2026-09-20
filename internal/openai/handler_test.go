@@ -83,7 +83,7 @@ func TestHandleModelsListsCapabilities(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(list.Data) != 3 {
+	if len(list.Data) != 6 {
 		t.Fatalf("len = %d", len(list.Data))
 	}
 }

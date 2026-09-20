@@ -98,7 +98,7 @@ func TestHealthJSONReady(t *testing.T) {
 	if report.Status != health.StatusReady {
 		t.Fatalf("status = %q", report.Status)
 	}
-	if len(report.Capabilities) != 3 {
+	if len(report.Capabilities) != 6 {
 		t.Fatalf("capabilities = %d", len(report.Capabilities))
 	}
 	for _, item := range report.Capabilities {
@@ -281,7 +281,7 @@ func TestHealthJSONOpenAIProbesOncePerURL(t *testing.T) {
 	if lists.Load() != 1 || chats.Load() != 1 {
 		t.Fatalf("lists=%d chats=%d, want 1 each", lists.Load(), chats.Load())
 	}
-	if len(report.Capabilities) != 3 {
+	if len(report.Capabilities) != 6 {
 		t.Fatalf("capabilities = %d", len(report.Capabilities))
 	}
 

@@ -17,12 +17,15 @@ func testRegistry() *capability.Registry {
 
 func TestKnownAndDefaults(t *testing.T) {
 	known := capability.Known()
-	if len(known) != 3 {
+	if len(known) != 6 {
 		t.Fatalf("Known() len = %d", len(known))
 	}
 	if known[0] != capability.Routing ||
 		known[1] != capability.IntentClassification ||
-		known[2] != capability.Translate {
+		known[2] != capability.ParameterExtraction ||
+		known[3] != capability.PersonalDetails ||
+		known[4] != capability.Translate ||
+		known[5] != capability.ConfigureEnvironment {
 		t.Fatalf("Known() = %v", known)
 	}
 	if !capability.IsKnown(capability.Routing) ||
@@ -33,7 +36,10 @@ func TestKnownAndDefaults(t *testing.T) {
 	}
 	if capability.DefaultMaxInputChars(capability.Routing) != 200 ||
 		capability.DefaultMaxInputChars(capability.IntentClassification) != 8000 ||
+		capability.DefaultMaxInputChars(capability.ParameterExtraction) != 16000 ||
+		capability.DefaultMaxInputChars(capability.PersonalDetails) != 16000 ||
 		capability.DefaultMaxInputChars(capability.Translate) != 16000 ||
+		capability.DefaultMaxInputChars(capability.ConfigureEnvironment) != 16000 ||
 		capability.DefaultMaxInputChars("unknown") != 0 {
 		t.Fatalf("DefaultMaxInputChars mismatch")
 	}
@@ -50,7 +56,10 @@ func TestRegistryFromBindingsTrimsURL(t *testing.T) {
 	reg, err := capability.NewRegistryFromBindings(map[string]capability.ModelBinding{
 		capability.Routing:              {BaseURL: "http://llm/", Model: "a", KeepAlive: "1m", MaxInputChars: 1},
 		capability.IntentClassification: {BaseURL: "http://llm/", Model: "b", KeepAlive: "1m", MaxInputChars: 2},
+		capability.ParameterExtraction:  {BaseURL: "http://llm/", Model: "c", KeepAlive: "1m", MaxInputChars: 3},
+		capability.PersonalDetails:      {BaseURL: "http://llm/", Model: "c", KeepAlive: "1m", MaxInputChars: 3},
 		capability.Translate:            {BaseURL: "http://llm/", Model: "c", KeepAlive: "1m", MaxInputChars: 3},
+		capability.ConfigureEnvironment: {BaseURL: "http://llm/", Model: "c", KeepAlive: "1m", MaxInputChars: 3},
 	})
 	if err != nil {
 		t.Fatalf("NewRegistryFromBindings() error = %v", err)
@@ -68,7 +77,10 @@ func TestRegistryGetRequiresURLAndModel(t *testing.T) {
 	reg, err := capability.NewRegistryFromBindings(map[string]capability.ModelBinding{
 		capability.Routing:              {BaseURL: "", Model: "a", KeepAlive: "1m"},
 		capability.IntentClassification: {BaseURL: "http://llm", Model: "", KeepAlive: "1m"},
+		capability.ParameterExtraction:  {BaseURL: "http://llm", Model: "c", KeepAlive: "1m"},
+		capability.PersonalDetails:      {BaseURL: "http://llm", Model: "c", KeepAlive: "1m"},
 		capability.Translate:            {BaseURL: "http://llm", Model: "c", KeepAlive: "1m"},
+		capability.ConfigureEnvironment: {BaseURL: "http://llm", Model: "c", KeepAlive: "1m"},
 	})
 	if err != nil {
 		t.Fatalf("NewRegistryFromBindings() error = %v", err)
@@ -85,7 +97,10 @@ func TestRegistryGetAllowsEmptyOpenAIModel(t *testing.T) {
 	reg, err := capability.NewRegistryFromBindings(map[string]capability.ModelBinding{
 		capability.Routing:              {Vendor: "openai", BaseURL: "https://someurl", Model: "", KeepAlive: "1m", MaxInputChars: 1},
 		capability.IntentClassification: {Vendor: "openai", BaseURL: "https://someurl", Model: "", KeepAlive: "1m", MaxInputChars: 2},
+		capability.ParameterExtraction:  {Vendor: "openai", BaseURL: "https://someurl", Model: "", KeepAlive: "1m", MaxInputChars: 3},
+		capability.PersonalDetails:      {Vendor: "openai", BaseURL: "https://someurl", Model: "", KeepAlive: "1m", MaxInputChars: 3},
 		capability.Translate:            {Vendor: "openai", BaseURL: "https://someurl", Model: "", KeepAlive: "1m", MaxInputChars: 3},
+		capability.ConfigureEnvironment: {Vendor: "openai", BaseURL: "https://someurl", Model: "", KeepAlive: "1m", MaxInputChars: 3},
 	})
 	if err != nil {
 		t.Fatalf("NewRegistryFromBindings() error = %v", err)
@@ -103,7 +118,7 @@ func TestHolderAllWhenReady(t *testing.T) {
 	h := capability.NewHolder()
 	h.Store(testRegistry())
 	all := h.All()
-	if len(all) != 3 {
+	if len(all) != 6 {
 		t.Fatalf("All() len = %d", len(all))
 	}
 	if all[0].Name != capability.Routing {
@@ -268,12 +283,15 @@ func TestHolderDormant(t *testing.T) {
 func TestRegistryAllOrder(t *testing.T) {
 	reg := testRegistry()
 	all := reg.All()
-	if len(all) != 3 {
+	if len(all) != 6 {
 		t.Fatalf("All() len = %d", len(all))
 	}
 	if all[0].Name != capability.Routing ||
 		all[1].Name != capability.IntentClassification ||
-		all[2].Name != capability.Translate {
+		all[2].Name != capability.ParameterExtraction ||
+		all[3].Name != capability.PersonalDetails ||
+		all[4].Name != capability.Translate ||
+		all[5].Name != capability.ConfigureEnvironment {
 		t.Fatalf("unexpected order: %+v", all)
 	}
 }
@@ -297,6 +315,30 @@ func TestBuildPromptsTranslate(t *testing.T) {
 	}
 	if !strings.Contains(systemPrompt, "Dutch") || !strings.Contains(systemPrompt, "English") {
 		t.Fatalf("systemPrompt = %q", systemPrompt)
+	}
+}
+
+func TestBuildPromptsForConstructionCapabilities(t *testing.T) {
+	for _, name := range []string{
+		capability.ParameterExtraction,
+		capability.PersonalDetails,
+		capability.ConfigureEnvironment,
+	} {
+		def, err := testRegistry().Get(name)
+		if err != nil {
+			t.Fatalf("Get(%s) error = %v", name, err)
+		}
+		systemPrompt, userPrompt, err := capability.BuildPrompts(def, map[string]any{"message": "customer input"})
+		if err != nil {
+			t.Fatalf("BuildPrompts(%s) error = %v", name, err)
+		}
+		if systemPrompt == "" || userPrompt != "customer input" {
+			t.Fatalf("BuildPrompts(%s) = %q, %q", name, systemPrompt, userPrompt)
+		}
+		parsed, err := capability.ParseResult(name, `{"result":"ok"}`)
+		if err != nil || parsed["result"] != "ok" {
+			t.Fatalf("ParseResult(%s) = %#v, %v", name, parsed, err)
+		}
 	}
 }
 

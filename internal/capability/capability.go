@@ -12,14 +12,17 @@ import (
 const (
 	Routing              = "routing"
 	IntentClassification = "intent-classification"
+	ParameterExtraction  = "parameter-extraction"
+	PersonalDetails      = "personal-details-extraction"
 	Translate            = "translate"
+	ConfigureEnvironment = "configure-environment"
 )
 
 // Known returns the gateway's built-in capability ids in stable order.
 // This is the single source of truth for which capabilities exist; the
 // manifest only supplies model/ingress bindings for these names.
 func Known() []string {
-	return []string{Routing, IntentClassification, Translate}
+	return []string{Routing, IntentClassification, ParameterExtraction, PersonalDetails, Translate, ConfigureEnvironment}
 }
 
 // DefaultMaxInputChars returns the built-in input character limit for a
@@ -31,6 +34,8 @@ func DefaultMaxInputChars(name string) int {
 		return 200
 	case IntentClassification:
 		return 8000
+	case ParameterExtraction, PersonalDetails, ConfigureEnvironment:
+		return 16000
 	case Translate:
 		return 16000
 	default:
@@ -76,7 +81,10 @@ type Registry struct {
 var knownSystemPrompts = map[string]string{
 	Routing:              routingSystemPrompt,
 	IntentClassification: intentSystemPrompt,
+	ParameterExtraction:  genericJSONSystemPrompt,
+	PersonalDetails:      genericJSONSystemPrompt,
 	Translate:            translateSystemPrompt,
+	ConfigureEnvironment: genericJSONSystemPrompt,
 }
 
 // NewRegistryFromBindings builds a registry from capability→model bindings.
@@ -114,7 +122,10 @@ func NewRegistry(routing, intent, translate ModelBinding) *Registry {
 	reg, err := NewRegistryFromBindings(map[string]ModelBinding{
 		Routing:              routing,
 		IntentClassification: intent,
+		ParameterExtraction:  translate,
+		PersonalDetails:      translate,
 		Translate:            translate,
+		ConfigureEnvironment: translate,
 	})
 	if err != nil {
 		panic(err)
@@ -210,7 +221,7 @@ func ValidateInputBounds(def Definition, input map[string]any) error {
 
 	var content string
 	switch def.Name {
-	case Routing, IntentClassification:
+	case Routing, IntentClassification, ParameterExtraction, PersonalDetails, ConfigureEnvironment:
 		content = stringValue(input["message"])
 	case Translate:
 		content = stringValue(input["text"])
@@ -228,7 +239,7 @@ func BuildPrompts(def Definition, input map[string]any) (systemPrompt, userPromp
 	override := stringValue(input["system_prompt"])
 
 	switch def.Name {
-	case Routing, IntentClassification:
+	case Routing, IntentClassification, ParameterExtraction, PersonalDetails, ConfigureEnvironment:
 		message := stringValue(input["message"])
 		if message == "" {
 			return "", "", fmt.Errorf("data.input.message is required")
@@ -306,6 +317,8 @@ func ParseResult(capabilityName, raw string) (map[string]any, error) {
 			"intent":     strings.TrimSpace(intent),
 			"confidence": confidence,
 		}, nil
+	case ParameterExtraction, PersonalDetails, ConfigureEnvironment:
+		return parsed, nil
 	case Translate:
 		text, _ := parsed["text"].(string)
 		if strings.TrimSpace(text) == "" {
@@ -389,6 +402,10 @@ Respond with ONLY valid JSON in this exact shape:
 {"intent":"<intent-slug>","confidence":0.0}
 Use lowercase kebab-case for intent (for example wall-painting, bathroom-renovation).
 Do not include markdown, explanation, or extra fields.`
+
+const genericJSONSystemPrompt = `You are an AI assistant for a construction services platform.
+Follow the user request and respond with ONLY one valid JSON object.
+Do not include markdown or explanation.`
 
 const translateSystemPrompt = `You are a professional translator for a construction services website. Translate the following service description from %s to %s.
 Respond with ONLY valid JSON in this exact shape:
