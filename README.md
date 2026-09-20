@@ -9,6 +9,8 @@ Standalone Go service that exposes AI capabilities over an OpenAI-compatible HTT
 - Internal responses: `queue:ai.responses` and per-request `queue:ai.responses:{id}`
 - Built-in capabilities (gateway code): `routing`, `intent-classification`, `translate`
 - Inference runtimes: **two** vendors — `ollama` and `openai`. Only vendors bound in the applied manifest are active; Ollama does not need to run unless the manifest uses it.
+- Optional manifest-defined HTTP tools provide a bounded agent loop: the LLM formats a request, the gateway calls the selected tool, and only the terminal success/error reaches egress.
+- Structured logs always go to the local sink and are also sent to Loki when `config.loki_endpoint` is configured and its `/ready` endpoint is reachable.
 - Health: `GET /health` (HTML), `GET /health.json` (JSON) on port 80
 - Docker network: `dev` (external)
 
@@ -131,14 +133,15 @@ Example catalog entries:
 
 ### Manifest (`manifest.json`)
 
-Copy `manifest.json.dist` to `manifest.json` for local/dev. Public defaults use placeholder names (`llm-model`, `com.mywebsite.ai`) and an OpenAI catalog entry (`id` `openai`, `url` `https://someurl`, `model` `null`). Rank 0 stays on Ollama so the stack applies without a Bearer token. To send a capability to OpenAI, set that capability’s rank 0 `model` to `"openai"`, point `url` at the real base URL, and set `OPENAI_BEARER_TOKEN`. Local private copies may use deploy-specific hostnames (for example `foundation-model`) and CloudEvent prefixes.
+Copy `manifest.json.dist` to `manifest.json` for local/dev. Its defaults match the sibling construction stack (`foundation-model`, Redis, and `com.buildright.ai`) and require no tool or Loki service. The OpenAI catalog entry remains a disabled fallback until a capability uses it at rank 0 and `OPENAI_BEARER_TOKEN` is set.
 
 | Field | Purpose |
 |-------|---------|
 | `inference_endpoint` | Catalog entries with `id`, required `vendor` (`ollama` or `openai`), `url` (base URL), `model` (runtime model name; required for Ollama, nullable for OpenAI), `keep_alive_seconds` (required for Ollama; optional for OpenAI) |
 | `capability_models` | Bindings for each built-in capability (`routing`, `intent-classification`, `translate`): ranked list of catalog `id`s (rank `0` is used today; higher ranks are reserved for failover). Optional `max_input_chars` on rank `0` (defaults: routing `200`, intent-classification `8000`, translate `16000`). Unknown capability keys are rejected. |
+| `tools` | Optional trusted tool catalog. Each entry requires a unique `name`, absolute HTTP(S) `endpoint`, and `instruction`. Requests select only by name; callers and model output cannot supply or override endpoints/instructions. |
 | `ingress` | Internal Redis work queue: adapter, address, ingress/egress channels, BRPOP timeout. Not the producer contract. |
-| `config` | Internal CloudEvent `message_prefix`, `http_address`, priority fairness counts, optional `max_system_prompt_chars` (default `4000`), optional `system_prompt_override_orgs` (default empty / deny all) |
+| `config` | Internal CloudEvent `message_prefix`, `http_address`, priority fairness counts, prompt controls, and optional `loki_endpoint`. Loki is disabled when blank and enabled only after `{endpoint}/ready` succeeds. |
 
 Example (trimmed; `manifest.json.dist` also catalogs the larger Ollama models):
 
@@ -217,6 +220,22 @@ Callers use OpenAI Chat Completions. `model` is the capability id. Full contract
   "priority": "HIGH"
 }
 ```
+
+### Manifest-defined tool execution
+
+Add `"tool": "tool-name"` to a Chat Completions request to select a tool from the active manifest. The gateway appends that tool's trusted instruction to the capability system prompt, asks the model for a JSON request body, and POSTs it to the manifest endpoint. A 2xx response is returned as the completion result. For a 4xx/5xx response, the model receives the status and body and returns a structured `retry` or `stop` decision. The gateway permits at most three retries after the initial call and publishes only the final success or error.
+
+```json
+{
+  "model": "intent-classification",
+  "messages": [{"role": "user", "content": "Create the wall-painting job"}],
+  "tool": "create-job"
+}
+```
+
+Tool endpoints and instructions come only from the manifest. Do not place secrets in tool instructions: manifest contents may be operationally visible, and tool calls currently carry only a JSON body and `Content-Type: application/json`.
+
+The current organisation header is caller-supplied and is not an authentication mechanism. Secure per-group RBAC must be connected to authenticated identity before organisation/tool allowlists can be treated as an authorization boundary.
 
 | Capability | User content | Result JSON in `choices[0].message.content` |
 |------------|--------------|-----------------------------------------------|

@@ -19,8 +19,10 @@ import (
 	"github.com/mywebsite/construction-ai-gateway/internal/configmgmt"
 	"github.com/mywebsite/construction-ai-gateway/internal/health"
 	"github.com/mywebsite/construction-ai-gateway/internal/inference"
+	gatewaylogging "github.com/mywebsite/construction-ai-gateway/internal/logging"
 	"github.com/mywebsite/construction-ai-gateway/internal/openai"
 	"github.com/mywebsite/construction-ai-gateway/internal/queue"
+	tooldef "github.com/mywebsite/construction-ai-gateway/internal/tool"
 	"github.com/mywebsite/construction-ai-gateway/internal/worker"
 	"github.com/redis/go-redis/v9"
 )
@@ -51,7 +53,7 @@ func main() {
 		"remote_manifest_polling_interval", cfg.ManifestPollingInterval.String(),
 	)
 
-	logger, debugFile, err := newLogger(cfg.Debug)
+	logger, loki, debugFile, err := newLogger(cfg.Debug)
 	if err != nil {
 		bootstrap.Error("failed to set up logger", "error", err)
 		os.Exit(1)
@@ -66,13 +68,16 @@ func main() {
 
 	registryHolder := capability.NewHolder()
 	overridePolicy := capability.NewOverridePolicyHolder()
+	toolHolder := tooldef.NewHolder()
 	llmPool := inference.NewRouter(cfg.OpenAIBearerToken)
 	plane := &dataPlane{
 		parent:         ctx,
 		registry:       registryHolder,
 		overridePolicy: overridePolicy,
+		tools:          toolHolder,
 		llmPool:        llmPool,
 		logger:         logger,
+		loki:           loki,
 	}
 
 	healthHandler := health.NewHandler(registryHolder, llmPool)
@@ -123,8 +128,10 @@ type dataPlane struct {
 	parent         context.Context
 	registry       *capability.Holder
 	overridePolicy *capability.OverridePolicyHolder
+	tools          *tooldef.Holder
 	llmPool        *inference.Router
 	logger         *slog.Logger
+	loki           *gatewaylogging.LokiHandler
 
 	mu       sync.Mutex
 	snap     *configmgmt.Snapshot
@@ -239,6 +246,22 @@ func (d *dataPlane) Apply(snap configmgmt.Snapshot, first bool) error {
 	cloudevent.ConfigureTypes(snap.CloudEventTypePrefix)
 	d.registry.Store(reg)
 	d.overridePolicy.Store(capability.PolicyFromOrgs(snap.SystemPromptOverrideOrgs, snap.MaxSystemPromptChars))
+	resolvedTools := make(map[string]tooldef.Definition, len(snap.Tools))
+	for name, configured := range snap.Tools {
+		resolvedTools[name] = tooldef.Definition{Name: configured.Name, Endpoint: configured.Endpoint, Instruction: configured.Instruction}
+	}
+	if d.tools == nil {
+		d.tools = tooldef.NewHolder()
+	}
+	d.tools.Store(resolvedTools)
+	if d.loki != nil {
+		probeCtx, cancel := context.WithTimeout(d.parent, 3*time.Second)
+		err := d.loki.Configure(probeCtx, snap.LokiEndpoint)
+		cancel()
+		if err != nil {
+			d.logger.Warn("loki unavailable; continuing with local logging", "endpoint", snap.LokiEndpoint, "error", err)
+		}
+	}
 
 	if needRedisRestart {
 		d.redis = newRedis
@@ -255,7 +278,7 @@ func (d *dataPlane) Apply(snap configmgmt.Snapshot, first bool) error {
 		workerCtx, cancel := context.WithCancel(d.parent)
 		d.cancel = cancel
 		d.done = make(chan struct{})
-		appWorker := worker.New(eventQueue, eventQueue, d.llmPool, d.registry, d.overridePolicy, d.logger)
+		appWorker := worker.NewWithTools(eventQueue, eventQueue, d.llmPool, d.registry, d.overridePolicy, d.tools, d.logger)
 		go func() {
 			defer close(d.done)
 			worker.Supervise(workerCtx, appWorker.Run, d.logger, time.Second)
@@ -307,7 +330,7 @@ func (d *dataPlane) stopWorkerLocked() {
 	}
 }
 
-func newLogger(debug bool) (*slog.Logger, *os.File, error) {
+func newLogger(debug bool) (*slog.Logger, *gatewaylogging.LokiHandler, *os.File, error) {
 	writer := io.Writer(os.Stdout)
 	var debugFile *os.File
 
@@ -316,13 +339,14 @@ func newLogger(debug bool) (*slog.Logger, *os.File, error) {
 		level = slog.LevelDebug
 		file, err := os.OpenFile(debugLogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		debugFile = file
 		writer = io.MultiWriter(os.Stdout, debugFile)
 	}
 
-	return slog.New(slog.NewJSONHandler(writer, &slog.HandlerOptions{
+	handler := gatewaylogging.NewLokiHandler(slog.NewJSONHandler(writer, &slog.HandlerOptions{
 		Level: level,
-	})), debugFile, nil
+	}))
+	return slog.New(handler), handler, debugFile, nil
 }

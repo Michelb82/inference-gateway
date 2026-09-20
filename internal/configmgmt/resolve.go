@@ -59,6 +59,13 @@ func Resolve(m Manifest) (Snapshot, error) {
 			MaxInputChars: maxChars,
 		}
 	}
+	tools := make(map[string]Tool, len(m.Tools))
+	for _, configured := range m.Tools {
+		configured.Name = strings.TrimSpace(configured.Name)
+		configured.Endpoint = strings.TrimSpace(configured.Endpoint)
+		configured.Instruction = strings.TrimSpace(configured.Instruction)
+		tools[configured.Name] = configured
+	}
 
 	maxSystemPromptChars := m.Config.MaxSystemPromptChars
 	if maxSystemPromptChars <= 0 {
@@ -86,6 +93,8 @@ func Resolve(m Manifest) (Snapshot, error) {
 		MaxSystemPromptChars:     maxSystemPromptChars,
 		SystemPromptOverrideOrgs: overrideOrgs,
 		Bindings:                 bindings,
+		Tools:                    tools,
+		LokiEndpoint:             strings.TrimRight(strings.TrimSpace(m.Config.LokiEndpoint), "/"),
 	}
 	snap.Fingerprint = fingerprint(snap)
 	return snap, nil
@@ -103,6 +112,7 @@ func fingerprint(s Snapshot) string {
 		fmt.Sprintf("%d", s.PriorityMediumCount),
 		fmt.Sprintf("%d", s.MaxSystemPromptChars),
 		strings.Join(s.SystemPromptOverrideOrgs, ","),
+		s.LokiEndpoint,
 	}
 	keys := make([]string, 0, len(s.Bindings))
 	for k := range s.Bindings {
@@ -112,6 +122,15 @@ func fingerprint(s Snapshot) string {
 	for _, k := range keys {
 		b := s.Bindings[k]
 		parts = append(parts, k, b.Vendor, b.BaseURL, b.Model, b.KeepAlive, fmt.Sprintf("%d", b.MaxInputChars))
+	}
+	toolNames := make([]string, 0, len(s.Tools))
+	for name := range s.Tools {
+		toolNames = append(toolNames, name)
+	}
+	sort.Strings(toolNames)
+	for _, name := range toolNames {
+		t := s.Tools[name]
+		parts = append(parts, t.Name, t.Endpoint, t.Instruction)
 	}
 	sum := sha256.Sum256([]byte(strings.Join(parts, "\x1f")))
 	return hex.EncodeToString(sum[:])

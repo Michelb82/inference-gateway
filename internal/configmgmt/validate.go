@@ -2,6 +2,7 @@ package configmgmt
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/mywebsite/construction-ai-gateway/internal/capability"
@@ -43,6 +44,24 @@ func Validate(m Manifest) error {
 			return fmt.Errorf("manifest.inference_endpoint duplicates id %q", id)
 		}
 		endpointsByID[id] = endpoint
+	}
+	seenTools := make(map[string]struct{}, len(m.Tools))
+	for i, tool := range m.Tools {
+		name := strings.TrimSpace(tool.Name)
+		if name == "" {
+			return fmt.Errorf("manifest.tools[%d].name must not be blank", i)
+		}
+		if _, exists := seenTools[name]; exists {
+			return fmt.Errorf("manifest.tools duplicates name %q", name)
+		}
+		seenTools[name] = struct{}{}
+		endpoint, err := url.ParseRequestURI(strings.TrimSpace(tool.Endpoint))
+		if err != nil || (endpoint.Scheme != "http" && endpoint.Scheme != "https") || endpoint.Host == "" {
+			return fmt.Errorf("manifest.tools[%d].endpoint must be an absolute HTTP(S) URL", i)
+		}
+		if strings.TrimSpace(tool.Instruction) == "" {
+			return fmt.Errorf("manifest.tools[%d].instruction must not be blank", i)
+		}
 	}
 
 	if len(m.CapabilityModels) == 0 {
@@ -128,6 +147,12 @@ func Validate(m Manifest) error {
 			return fmt.Errorf("manifest.config.system_prompt_override_orgs duplicates %q", orgID)
 		}
 		seenOrgs[orgID] = struct{}{}
+	}
+	if raw := strings.TrimSpace(m.Config.LokiEndpoint); raw != "" {
+		endpoint, err := url.ParseRequestURI(raw)
+		if err != nil || (endpoint.Scheme != "http" && endpoint.Scheme != "https") || endpoint.Host == "" {
+			return fmt.Errorf("manifest.config.loki_endpoint must be an absolute HTTP(S) URL")
+		}
 	}
 
 	return nil
