@@ -52,6 +52,9 @@ func eventFromRequest(req ChatCompletionRequest, organisationID string) (*cloude
 	if prio := strings.TrimSpace(req.Priority); prio != "" {
 		data["priority"] = prio
 	}
+	if tool := strings.TrimSpace(req.Tool); tool != "" {
+		data["tool"] = tool
+	}
 
 	event := &cloudevent.Event{
 		Type:            cloudevent.EventTypeRequest,

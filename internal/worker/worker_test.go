@@ -14,6 +14,7 @@ import (
 	"github.com/mywebsite/construction-ai-gateway/internal/capability"
 	"github.com/mywebsite/construction-ai-gateway/internal/cloudevent"
 	"github.com/mywebsite/construction-ai-gateway/internal/inference"
+	tooldef "github.com/mywebsite/construction-ai-gateway/internal/tool"
 )
 
 func testRegistry() *capability.Registry {
@@ -22,6 +23,40 @@ func testRegistry() *capability.Registry {
 		capability.ModelBinding{BaseURL: "http://llm-model:11434", Model: "qwen3:4b-q4_K_M", KeepAlive: "5m", MaxInputChars: 8000},
 		capability.ModelBinding{BaseURL: "http://llm-model:11434", Model: "qwen3:14b-q4_K_M", KeepAlive: "2m", MaxInputChars: 16000},
 	)
+}
+
+func TestHandleToolPublishesOnlySuccessfulToolOutput(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"created":true}`))
+	}))
+	t.Cleanup(server.Close)
+
+	holder := tooldef.NewHolder()
+	holder.Store(map[string]tooldef.Definition{"create": {Name: "create", Endpoint: server.URL, Instruction: "Create it."}})
+	publisher := &fakePublisher{}
+	llm := &fakeOllama{result: `{"body":{"name":"wall"}}`}
+	w := NewWithTools(nil, publisher, llm, testRegistry(), nil, holder, nil)
+	event := mustEvent(t, "request_intent.json")
+	event.Data["tool"] = "create"
+	if err := w.handle(context.Background(), event); err != nil {
+		t.Fatal(err)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("calls = %d", calls.Load())
+	}
+	if len(publisher.events) != 1 || publisher.events[0].Type != cloudevent.EventTypeRequestCompleted {
+		t.Fatalf("events = %#v", publisher.events)
+	}
+	result := publisher.events[0].Data["result"].(map[string]any)
+	if result["created"] != true {
+		t.Fatalf("result = %#v", result)
+	}
+	if !strings.Contains(llm.systemPrompt, "Create it.") {
+		t.Fatalf("system prompt = %q", llm.systemPrompt)
+	}
 }
 
 func testOverridePolicy(orgs []string, maxChars int) *capability.OverridePolicyHolder {

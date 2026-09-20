@@ -1,15 +1,21 @@
 package worker
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
+	"net/http"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/mywebsite/construction-ai-gateway/internal/capability"
 	"github.com/mywebsite/construction-ai-gateway/internal/cloudevent"
 	"github.com/mywebsite/construction-ai-gateway/internal/inference"
+	tooldef "github.com/mywebsite/construction-ai-gateway/internal/tool"
 )
 
 type RequestConsumer interface {
@@ -32,6 +38,10 @@ type OverridePolicySource interface {
 	Get() capability.OverridePolicy
 }
 
+type ToolResolver interface {
+	Get(name string) (tooldef.Definition, error)
+}
+
 type Worker struct {
 	consumer       RequestConsumer
 	publisher      ResponsePublisher
@@ -39,6 +49,15 @@ type Worker struct {
 	registry       CapabilityResolver
 	overridePolicy OverridePolicySource
 	logger         *slog.Logger
+	tools          ToolResolver
+	httpClient     *http.Client
+}
+
+func NewWithTools(consumer RequestConsumer, publisher ResponsePublisher, llm ChatCompleter, registry CapabilityResolver, overridePolicy OverridePolicySource, tools ToolResolver, logger *slog.Logger) *Worker {
+	w := New(consumer, publisher, llm, registry, overridePolicy, logger)
+	w.tools = tools
+	w.httpClient = &http.Client{Timeout: 120 * time.Second}
+	return w
 }
 
 func New(
@@ -138,6 +157,10 @@ func (w *Worker) handle(ctx context.Context, event *cloudevent.Event) error {
 	if err != nil {
 		return w.publishFailure(ctx, event, capabilityName, err)
 	}
+	toolName := stringValue(event.Data["tool"])
+	if toolName != "" {
+		return w.handleTool(ctx, event, capabilityName, def, systemPrompt, userPrompt, toolName)
+	}
 
 	raw, err := w.ollama.Complete(ctx, inference.CompleteRequest{
 		Vendor:       def.Vendor,
@@ -166,6 +189,100 @@ func (w *Worker) handle(ctx context.Context, event *cloudevent.Event) error {
 		"capability": capabilityName,
 		"result":     result,
 	})
+	return w.publish(ctx, event, response)
+}
+
+const toolProtocol = `Format the HTTP tool request as JSON only: {"body": <JSON value>}. Do not include markdown.`
+const toolDecisionProtocol = `The HTTP tool returned an error. Respond as JSON only. To retry use {"action":"retry","body":<JSON value>}; to stop use {"action":"stop"}. Do not include markdown.`
+
+type toolDecision struct {
+	Action string `json:"action"`
+	Body   any    `json:"body"`
+}
+
+func (w *Worker) handleTool(ctx context.Context, event *cloudevent.Event, capabilityName string, def capability.Definition, systemPrompt, userPrompt, toolName string) error {
+	if w.tools == nil {
+		return w.publishFailure(ctx, event, capabilityName, fmt.Errorf("tools are not configured"))
+	}
+	selected, err := w.tools.Get(toolName)
+	if err != nil {
+		return w.publishFailure(ctx, event, capabilityName, err)
+	}
+	raw, err := w.ollama.Complete(ctx, inference.CompleteRequest{Vendor: def.Vendor, BaseURL: def.BaseURL, SystemPrompt: systemPrompt + "\n\n" + selected.Instruction + "\n\n" + toolProtocol, Prompt: userPrompt, Model: def.Model, KeepAlive: def.KeepAlive})
+	if err != nil {
+		return w.publishFailure(ctx, event, capabilityName, err)
+	}
+	decision, err := parseToolDecision(raw)
+	if err != nil {
+		return w.publishFailure(ctx, event, capabilityName, fmt.Errorf("invalid tool request from inference: %w", err))
+	}
+	for attempt := 0; attempt <= 3; attempt++ {
+		status, responseBody, callErr := w.callTool(ctx, selected.Endpoint, decision.Body)
+		if callErr != nil {
+			return w.publishFailure(ctx, event, capabilityName, callErr)
+		}
+		if status >= 200 && status < 300 {
+			return w.publish(ctx, event, cloudevent.NewResponse(event, cloudevent.EventTypeRequestCompleted, map[string]any{"capability": capabilityName, "result": decodeToolBody(responseBody)}))
+		}
+		if attempt == 3 {
+			return w.publishToolFailure(ctx, event, capabilityName, status, responseBody)
+		}
+		feedback := fmt.Sprintf("Tool request body: %s\nTool HTTP status: %d\nTool response: %s", mustJSON(decision.Body), status, responseBody)
+		raw, err = w.ollama.Complete(ctx, inference.CompleteRequest{Vendor: def.Vendor, BaseURL: def.BaseURL, SystemPrompt: systemPrompt + "\n\n" + selected.Instruction + "\n\n" + toolDecisionProtocol, Prompt: feedback, Model: def.Model, KeepAlive: def.KeepAlive})
+		if err != nil {
+			return w.publishFailure(ctx, event, capabilityName, err)
+		}
+		decision, err = parseToolDecision(raw)
+		if err != nil {
+			return w.publishFailure(ctx, event, capabilityName, fmt.Errorf("invalid tool decision from inference: %w", err))
+		}
+		if strings.EqualFold(decision.Action, "stop") {
+			return w.publishToolFailure(ctx, event, capabilityName, status, responseBody)
+		}
+		if !strings.EqualFold(decision.Action, "retry") {
+			return w.publishFailure(ctx, event, capabilityName, fmt.Errorf("inference returned unknown tool action %q", decision.Action))
+		}
+	}
+	return nil
+}
+
+func (w *Worker) callTool(ctx context.Context, endpoint string, body any) (int, string, error) {
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return 0, "", fmt.Errorf("encode tool request: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
+	if err != nil {
+		return 0, "", fmt.Errorf("create tool request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	response, err := w.httpClient.Do(req)
+	if err != nil {
+		return 0, "", fmt.Errorf("call tool: %w", err)
+	}
+	defer response.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	if err != nil {
+		return 0, "", fmt.Errorf("read tool response: %w", err)
+	}
+	return response.StatusCode, string(raw), nil
+}
+
+func parseToolDecision(raw string) (toolDecision, error) {
+	var result toolDecision
+	err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &result)
+	return result, err
+}
+func mustJSON(value any) string { raw, _ := json.Marshal(value); return string(raw) }
+func decodeToolBody(raw string) any {
+	var value any
+	if json.Unmarshal([]byte(raw), &value) == nil {
+		return value
+	}
+	return raw
+}
+func (w *Worker) publishToolFailure(ctx context.Context, event *cloudevent.Event, capabilityName string, status int, body string) error {
+	response := cloudevent.NewResponse(event, cloudevent.EventTypeRequestFailed, map[string]any{"capability": capabilityName, "error": map[string]any{"status": status, "body": decodeToolBody(body)}})
 	return w.publish(ctx, event, response)
 }
 

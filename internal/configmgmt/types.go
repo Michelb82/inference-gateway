@@ -7,8 +7,15 @@ package configmgmt
 type Manifest struct {
 	InferenceEndpoint []Endpoint                  `json:"inference_endpoint"`
 	CapabilityModels  map[string][]RankedModelRef `json:"capability_models"`
+	Tools             []Tool                      `json:"tools,omitempty"`
 	Ingress           Ingress                     `json:"ingress"`
 	Config            RuntimeConfig               `json:"config"`
+}
+
+type Tool struct {
+	Name        string `json:"name"`
+	Endpoint    string `json:"endpoint"`
+	Instruction string `json:"instruction"`
 }
 
 type Endpoint struct {
@@ -42,6 +49,7 @@ type RuntimeConfig struct {
 	PriorityCountMedium      int      `json:"priority_count_medium"`
 	MaxSystemPromptChars     int      `json:"max_system_prompt_chars,omitempty"`
 	SystemPromptOverrideOrgs []string `json:"system_prompt_override_orgs,omitempty"`
+	LokiEndpoint             string   `json:"loki_endpoint,omitempty"`
 }
 
 // ModelBinding is the resolved rank-0 binding for a capability.
@@ -67,4 +75,6 @@ type Snapshot struct {
 	MaxSystemPromptChars     int
 	SystemPromptOverrideOrgs []string
 	Bindings                 map[string]ModelBinding
+	Tools                    map[string]Tool
+	LokiEndpoint             string
 }

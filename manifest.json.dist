@@ -3,21 +3,21 @@
     {
       "id": "qwen3:1.7b",
       "vendor": "ollama",
-      "url": "http://llm-model:11434",
+      "url": "http://foundation-model:11434",
       "model": "qwen3:1.7b-q4_K_M",
       "keep_alive_seconds": 300
     },
     {
       "id": "qwen3:4b",
       "vendor": "ollama",
-      "url": "http://llm-model:11434",
+      "url": "http://foundation-model:11434",
       "model": "qwen3:4b-q4_K_M",
       "keep_alive_seconds": 300
     },
     {
       "id": "qwen3:14b",
       "vendor": "ollama",
-      "url": "http://llm-model:11434",
+      "url": "http://foundation-model:11434",
       "model": "qwen3:14b-q4_K_M",
       "keep_alive_seconds": 120
     },
@@ -47,6 +47,7 @@
       {"rank": 2, "model": "openai"}
     ]
   },
+  "tools": [],
   "ingress": {
     "adapter": "redis",
     "address": "redis:6379",
@@ -55,11 +56,12 @@
     "brpop_timeout_seconds": 5
   },
   "config": {
-    "message_prefix": "com.mywebsite.ai",
+    "message_prefix": "com.buildright.ai",
     "http_address": ":80",
     "priority_count_high": 3,
     "priority_count_medium": 3,
     "max_system_prompt_chars": 4000,
-    "system_prompt_override_orgs": []
+    "system_prompt_override_orgs": [],
+    "loki_endpoint": ""
   }
 }

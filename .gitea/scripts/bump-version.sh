@@ -6,7 +6,7 @@ set -euo pipefail
 # - Each push: increment minor (0.1 -> 0.2)
 # - Commit message contains MAJOR_BUMP: increment major, reset minor (0.5 -> 1.0)
 
-COMMIT_MSG="${GITHUB_EVENT_HEAD_COMMIT_MESSAGE:-$(git log -1 --pretty=%B)}"
+COMMIT_MSG="${COMMIT_MESSAGE:-$(git log -1 --pretty=%B)}"
 LATEST_TAG=$(git tag -l 'v[0-9]*.[0-9]*' --sort=-v:refname | head -n1 || true)
 
 if [ -z "$LATEST_TAG" ]; then
@@ -27,4 +27,4 @@ else
 fi
 
 echo "Next version: ${VERSION}"
-echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
+echo "version=${VERSION}" >> "${GITEA_OUTPUT}"

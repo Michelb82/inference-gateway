@@ -17,6 +17,7 @@ type ChatCompletionRequest struct {
 	Priority     string        `json:"priority,omitempty"`
 	SourceLocale string        `json:"source_locale,omitempty"`
 	TargetLocale string        `json:"target_locale,omitempty"`
+	Tool         string        `json:"tool,omitempty"`
 }
 
 type ChatMessage struct {
