@@ -41,7 +41,22 @@
       {"rank": 2, "model": "qwen3:1.7b"},
       {"rank": 3, "model": "openai"}
     ],
+    "parameter-extraction": [
+      {"rank": 0, "model": "qwen3:14b", "max_input_chars": 16000},
+      {"rank": 1, "model": "qwen3:4b"},
+      {"rank": 2, "model": "openai"}
+    ],
+    "personal-details-extraction": [
+      {"rank": 0, "model": "qwen3:14b", "max_input_chars": 16000},
+      {"rank": 1, "model": "qwen3:4b"},
+      {"rank": 2, "model": "openai"}
+    ],
     "translate": [
+      {"rank": 0, "model": "qwen3:14b", "max_input_chars": 16000},
+      {"rank": 1, "model": "qwen3:4b"},
+      {"rank": 2, "model": "openai"}
+    ],
+    "configure-environment": [
       {"rank": 0, "model": "qwen3:14b", "max_input_chars": 16000},
       {"rank": 1, "model": "qwen3:4b"},
       {"rank": 2, "model": "openai"}

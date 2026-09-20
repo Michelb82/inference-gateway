@@ -7,7 +7,7 @@ Standalone Go service that exposes AI capabilities over an OpenAI-compatible HTT
 - External ingestion: OpenAI Chat Completions over HTTP (`POST /v1/chat/completions`, `GET /v1/models`)
 - Internal work queue (Redis): `queue:ai.requests` plus priority lanes `queue:ai.requests:critical|high|medium|low`
 - Internal responses: `queue:ai.responses` and per-request `queue:ai.responses:{id}`
-- Built-in capabilities (gateway code): `routing`, `intent-classification`, `translate`
+- Built-in capabilities (gateway code): `routing`, `intent-classification`, `parameter-extraction`, `personal-details-extraction`, `translate`, `configure-environment`
 - Inference runtimes: **two** vendors — `ollama` and `openai`. Only vendors bound in the applied manifest are active; Ollama does not need to run unless the manifest uses it.
 - Optional manifest-defined HTTP tools provide a bounded agent loop: the LLM formats a request, the gateway calls the selected tool, and only the terminal success/error reaches egress.
 - Structured logs always go to the local sink and are also sent to Loki when `config.loki_endpoint` is configured and its `/ready` endpoint is reachable.
@@ -145,7 +145,7 @@ Copy `manifest.json.dist` to `manifest.json` for local/dev. Its defaults match t
 | Field | Purpose |
 |-------|---------|
 | `inference_endpoint` | Catalog entries with `id`, required `vendor` (`ollama` or `openai`), `url` (base URL), `model` (runtime model name; required for Ollama, nullable for OpenAI), `keep_alive_seconds` (required for Ollama; optional for OpenAI) |
-| `capability_models` | Bindings for each built-in capability (`routing`, `intent-classification`, `translate`): ranked list of catalog `id`s (rank `0` is used today; higher ranks are reserved for failover). Optional `max_input_chars` on rank `0` (defaults: routing `200`, intent-classification `8000`, translate `16000`). Unknown capability keys are rejected. |
+| `capability_models` | Bindings for each built-in capability: ranked list of catalog `id`s (rank `0` is used today; higher ranks are reserved for failover). Optional `max_input_chars` on rank `0` (defaults: routing `200`, intent-classification `8000`, all other capabilities `16000`). Unknown capability keys are rejected. |
 | `tools` | Optional trusted tool catalog. Each entry requires a unique `name`, absolute HTTP(S) `endpoint`, and `instruction`. Requests select only by name; callers and model output cannot supply or override endpoints/instructions. |
 | `ingress` | Internal Redis work queue: adapter, address, ingress/egress channels, BRPOP timeout. Not the producer contract. |
 | `config` | Internal CloudEvent `message_prefix`, `http_address`, priority fairness counts, prompt controls, and optional `loki_endpoint`. Loki is disabled when blank and enabled only after `{endpoint}/ready` succeeds. |
@@ -307,7 +307,7 @@ Translate example:
 | Path | Method | Meaning |
 |------|--------|---------|
 | `/v1/chat/completions` | POST | OpenAI Chat Completions; `model` is a capability id |
-| `/v1/models` | GET | Lists capability ids (`routing`, `intent-classification`, `translate`) |
+| `/v1/models` | GET | Lists all six construction capability ids configured by the gateway. |
 | `/health` | GET | Per-capability readiness page (HTML) |
 | `/health.json` | GET | Same data for probes/automation (JSON) |
 

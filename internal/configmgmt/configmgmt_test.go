@@ -31,9 +31,18 @@ func validManifest() configmgmt.Manifest {
 				{Rank: 0, Model: "qwen3:4b"},
 				{Rank: 1, Model: "qwen3:14b"},
 			},
+			"parameter-extraction": {
+				{Rank: 0, Model: "qwen3:14b"},
+			},
+			"personal-details-extraction": {
+				{Rank: 0, Model: "qwen3:14b"},
+			},
 			"translate": {
 				{Rank: 0, Model: "qwen3:14b"},
 				{Rank: 1, Model: "qwen3:4b"},
+			},
+			"configure-environment": {
+				{Rank: 0, Model: "qwen3:14b"},
 			},
 		},
 		Ingress: configmgmt.Ingress{
@@ -82,6 +91,14 @@ func TestLoadDistManifest(t *testing.T) {
 	}
 	if snap.Bindings["translate"].MaxInputChars != 16000 {
 		t.Fatalf("translate max chars = %d", snap.Bindings["translate"].MaxInputChars)
+	}
+	for _, name := range []string{"parameter-extraction", "personal-details-extraction", "configure-environment"} {
+		if snap.Bindings[name].Model != "qwen3:14b-q4_K_M" {
+			t.Fatalf("%s model = %q", name, snap.Bindings[name].Model)
+		}
+		if snap.Bindings[name].MaxInputChars != 16000 {
+			t.Fatalf("%s max chars = %d", name, snap.Bindings[name].MaxInputChars)
+		}
 	}
 	if snap.Bindings["routing"].KeepAlive != "300s" {
 		t.Fatalf("routing keep_alive = %q", snap.Bindings["routing"].KeepAlive)
@@ -314,10 +331,10 @@ func TestResolveBindsOnlyKnownCapabilities(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve() error = %v", err)
 	}
-	if len(snap.Bindings) != 3 {
-		t.Fatalf("bindings = %d, want 3 known capabilities", len(snap.Bindings))
+	if len(snap.Bindings) != 6 {
+		t.Fatalf("bindings = %d, want 6 known capabilities", len(snap.Bindings))
 	}
-	for _, name := range []string{"routing", "intent-classification", "translate"} {
+	for _, name := range []string{"routing", "intent-classification", "parameter-extraction", "personal-details-extraction", "translate", "configure-environment"} {
 		if _, ok := snap.Bindings[name]; !ok {
 			t.Fatalf("missing binding for %q", name)
 		}

@@ -191,7 +191,10 @@ func TestApplyContinuesWhenOpenAIAdapterDisabled(t *testing.T) {
 		Bindings: map[string]configmgmt.ModelBinding{
 			capability.Routing:              ollamaBinding,
 			capability.IntentClassification: ollamaBinding,
+			capability.ParameterExtraction:  openaiBinding,
+			capability.PersonalDetails:      openaiBinding,
 			capability.Translate:            openaiBinding,
+			capability.ConfigureEnvironment: openaiBinding,
 		},
 	}
 	if err := plane.Apply(snap, true); err != nil {
@@ -252,7 +255,10 @@ func TestApplySucceedsWhenOpenAICatalogOmitsNamedModel(t *testing.T) {
 		Bindings: map[string]configmgmt.ModelBinding{
 			capability.Routing:              openaiBinding,
 			capability.IntentClassification: openaiBinding,
+			capability.ParameterExtraction:  openaiBinding,
+			capability.PersonalDetails:      openaiBinding,
 			capability.Translate:            openaiBinding,
+			capability.ConfigureEnvironment: openaiBinding,
 		},
 	}
 	if err := plane.Apply(snap, true); err != nil {
@@ -306,7 +312,10 @@ func TestApplyOpenAIOnlyDoesNotRequireOllama(t *testing.T) {
 		Bindings: map[string]configmgmt.ModelBinding{
 			capability.Routing:              openaiBinding,
 			capability.IntentClassification: openaiBinding,
+			capability.ParameterExtraction:  openaiBinding,
+			capability.PersonalDetails:      openaiBinding,
 			capability.Translate:            openaiBinding,
+			capability.ConfigureEnvironment: openaiBinding,
 		},
 	}
 	if err := plane.Apply(snap, true); err != nil {
@@ -338,7 +347,10 @@ func testSnapshot(redisAddr, llmURL, model, fingerprint, prefix string) configmg
 		Bindings: map[string]configmgmt.ModelBinding{
 			capability.Routing:              binding,
 			capability.IntentClassification: binding,
+			capability.ParameterExtraction:  binding,
+			capability.PersonalDetails:      binding,
 			capability.Translate:            binding,
+			capability.ConfigureEnvironment: binding,
 		},
 	}
 }
