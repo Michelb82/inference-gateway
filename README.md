@@ -50,6 +50,13 @@ Runtime configuration (inference endpoints, capability→endpoint bindings, inpu
 - **Soft failure:** if the manager is unavailable or returns an invalid document, the gateway keeps the current snapshot (or remains dormant). A failed poll never clears a working configuration.
 - On a successful apply, the gateway activates (or updates) the data plane using **rank 0** model bindings from `capability_models`. Ranked fallbacks are reserved for later.
 
+Private control-plane discovery remains available while the gateway is dormant:
+
+- `GET /management/v1/manifest-support` lists the exact capabilities, inference vendors, defaults, and ingress adapters supported by this build.
+- `POST /management/v1/manifests/validate` validates a candidate with the same parser and resolver used during polling. Valid documents return HTTP 200; invalid documents return HTTP 422.
+
+These endpoints are for Inference Service Manager on a trusted Docker network. Do not expose `/management/` through a public reverse proxy. OpenAI-compatible runtimes such as vLLM use vendor `openai` unless a dedicated vendor is added to a future gateway build.
+
 Compose for local/dev mounts `manifest.json` and passes `--manifest` so the stack works without AI Manager. Production-oriented runs can omit that flag and wait for the manager.
 
 For planned control-plane / data-plane separation (Ingress, Orchestration, Policy, Service Manager), see [docs/future-architecture.md](docs/future-architecture.md). That document also describes how this gateway’s OpenAI HTTP producer contract relates to those later layers. Redis remains an internal work queue, not a future producer adapter.
