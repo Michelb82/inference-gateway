@@ -324,12 +324,14 @@ HTTP status is `200` when ready and `503` when not ready or dormant. Model names
 
 ## Manual smoke test
 
+For a [live debug session](docs/live-debug-session.md), follow gateway logs and send a **LOW** priority `intent-classification` request. Redis is assumed to be running; the gateway needs an applied manifest and an available model. The helper requires Bash, Python 3, and curl 7.76+ and prints the response or error (nonzero exit on failure).
+
 With the gateway running and a manifest applied:
 
 ```bash
-chmod +x scripts/push-test-event.sh
-./scripts/push-test-event.sh
-CAPABILITY=routing ./scripts/push-test-event.sh
+bash scripts/push-test-event.sh
+MESSAGE='Please paint my kitchen' bash scripts/push-test-event.sh
+CAPABILITY=routing bash scripts/push-test-event.sh
 ```
 
 ```bash
