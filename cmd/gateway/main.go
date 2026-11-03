@@ -150,14 +150,7 @@ func (d *dataPlane) Apply(snap configmgmt.Snapshot, first bool) error {
 
 	bindings := make(map[string]capability.ModelBinding, len(snap.Bindings))
 	for name, binding := range snap.Bindings {
-		bindings[name] = capability.ModelBinding{
-			Vendor:        binding.Vendor,
-			BaseURL:       binding.BaseURL,
-			Model:         binding.Model,
-			KeepAlive:     binding.KeepAlive,
-			MaxInputChars: binding.MaxInputChars,
-			SystemPrompt:  binding.SystemPrompt,
-		}
+		bindings[name] = binding
 	}
 	reg, err := capability.NewRegistryFromBindings(bindings)
 	if err != nil {
@@ -298,6 +291,15 @@ func (d *dataPlane) Apply(snap configmgmt.Snapshot, first bool) error {
 	}
 
 	copySnap := snap
+	copySnap.Bindings = make(map[string]configmgmt.ModelBinding, len(bindings))
+	for _, def := range reg.All() {
+		copySnap.Bindings[def.Name] = def.ModelBinding
+	}
+	copySnap.SystemPromptOverrideOrgs = append([]string(nil), snap.SystemPromptOverrideOrgs...)
+	copySnap.Tools = make(map[string]configmgmt.Tool, len(snap.Tools))
+	for name, tool := range snap.Tools {
+		copySnap.Tools[name] = tool
+	}
 	d.snap = &copySnap
 	return nil
 }
@@ -311,6 +313,16 @@ func (d *dataPlane) Stop() {
 		_ = d.redis.Close()
 		d.redis = nil
 	}
+}
+
+// InferenceRuntime captures admission's queue and registry under the apply lock.
+func (d *dataPlane) InferenceRuntime() (openai.Queue, *capability.Registry) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.queue == nil {
+		return nil, nil
+	}
+	return d.queue, d.registry.Snapshot()
 }
 
 func (d *dataPlane) InferenceQueue() openai.Queue {

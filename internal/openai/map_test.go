@@ -2,26 +2,26 @@ package openai
 
 import (
 	"encoding/json"
+	"github.com/mywebsite/construction-ai-gateway/internal/testfixture"
 	"net/http"
 	"testing"
 
-	"github.com/mywebsite/construction-ai-gateway/internal/capability"
 	"github.com/mywebsite/construction-ai-gateway/internal/cloudevent"
 )
 
 func TestEventFromRequestIntent(t *testing.T) {
-	event, err := eventFromRequest(ChatCompletionRequest{
-		Model:    capability.IntentClassification,
+	event, err := eventFromTestRequest(ChatCompletionRequest{
+		Model:    "intent-classification",
 		Messages: []ChatMessage{{Role: "user", Content: "I need my living room painted"}},
 		Priority: "HIGH",
 	}, "7")
 	if err != nil {
-		t.Fatalf("eventFromRequest() error = %v", err)
+		t.Fatalf("eventFromTestRequest() error = %v", err)
 	}
 	if event.Type != cloudevent.EventTypeRequest {
 		t.Fatalf("Type = %q", event.Type)
 	}
-	if event.Data["capability"] != capability.IntentClassification {
+	if event.Data["capability"] != "intent-classification" {
 		t.Fatalf("capability = %v", event.Data["capability"])
 	}
 	if _, ok := event.Data["model"]; ok {
@@ -43,14 +43,14 @@ func TestEventFromRequestIntent(t *testing.T) {
 }
 
 func TestEventFromRequestTranslateLocales(t *testing.T) {
-	event, err := eventFromRequest(ChatCompletionRequest{
-		Model:        capability.Translate,
+	event, err := eventFromTestRequest(ChatCompletionRequest{
+		Model:        "translate",
 		Messages:     []ChatMessage{{Role: "user", Content: "Hallo"}},
 		SourceLocale: "nl",
 		TargetLocale: "en",
 	}, "")
 	if err != nil {
-		t.Fatalf("eventFromRequest() error = %v", err)
+		t.Fatalf("eventFromTestRequest() error = %v", err)
 	}
 	input, _ := event.Data["input"].(map[string]any)
 	if input["text"] != "Hallo" || input["source_locale"] != "nl" || input["target_locale"] != "en" {
@@ -59,8 +59,8 @@ func TestEventFromRequestTranslateLocales(t *testing.T) {
 }
 
 func TestEventFromRequestSystemAndLastUser(t *testing.T) {
-	event, err := eventFromRequest(ChatCompletionRequest{
-		Model: capability.Routing,
+	event, err := eventFromTestRequest(ChatCompletionRequest{
+		Model: "routing",
 		Messages: []ChatMessage{
 			{Role: "system", Content: "custom"},
 			{Role: "user", Content: "first"},
@@ -68,7 +68,7 @@ func TestEventFromRequestSystemAndLastUser(t *testing.T) {
 		},
 	}, "7")
 	if err != nil {
-		t.Fatalf("eventFromRequest() error = %v", err)
+		t.Fatalf("eventFromTestRequest() error = %v", err)
 	}
 	input, _ := event.Data["input"].(map[string]any)
 	if input["message"] != "last" {
@@ -80,7 +80,7 @@ func TestEventFromRequestSystemAndLastUser(t *testing.T) {
 }
 
 func TestEventFromRequestRejectsUnknownAndStream(t *testing.T) {
-	if _, err := eventFromRequest(ChatCompletionRequest{
+	if _, err := eventFromTestRequest(ChatCompletionRequest{
 		Model:    "qwen3:1.7b-q4_K_M",
 		Messages: []ChatMessage{{Role: "user", Content: "hi"}},
 	}, ""); err == nil || err.Status != http.StatusBadRequest || err.Code != "unknown_model" {
@@ -88,25 +88,25 @@ func TestEventFromRequestRejectsUnknownAndStream(t *testing.T) {
 	}
 
 	stream := true
-	if _, err := eventFromRequest(ChatCompletionRequest{
-		Model:    capability.Routing,
+	if _, err := eventFromTestRequest(ChatCompletionRequest{
+		Model:    "routing",
 		Messages: []ChatMessage{{Role: "user", Content: "hi"}},
 		Stream:   &stream,
 	}, ""); err == nil || err.Param != "stream" {
 		t.Fatalf("stream err = %#v", err)
 	}
 
-	if _, err := eventFromRequest(ChatCompletionRequest{Model: capability.Routing}, ""); err == nil {
+	if _, err := eventFromTestRequest(ChatCompletionRequest{Model: "routing"}, ""); err == nil {
 		t.Fatal("expected missing messages")
 	}
-	if _, err := eventFromRequest(ChatCompletionRequest{
-		Model:    capability.Routing,
+	if _, err := eventFromTestRequest(ChatCompletionRequest{
+		Model:    "routing",
 		Messages: []ChatMessage{{Role: "system", Content: "only"}},
 	}, ""); err == nil {
 		t.Fatal("expected missing user")
 	}
-	if _, err := eventFromRequest(ChatCompletionRequest{
-		Model:    capability.Routing,
+	if _, err := eventFromTestRequest(ChatCompletionRequest{
+		Model:    "routing",
 		Messages: []ChatMessage{{Role: "user", Content: "  "}},
 	}, ""); err == nil {
 		t.Fatal("expected blank user")
@@ -120,7 +120,7 @@ func TestCompletionFromEventJSONString(t *testing.T) {
 		Subject: &subject,
 		ID:      "response-id",
 		Data: map[string]any{
-			"capability": capability.IntentClassification,
+			"capability": "intent-classification",
 			"result":     map[string]any{"intent": "wall-painting", "confidence": 0.95},
 		},
 	}
@@ -128,7 +128,7 @@ func TestCompletionFromEventJSONString(t *testing.T) {
 	if got.ID != subject {
 		t.Fatalf("ID = %q", got.ID)
 	}
-	if got.Model != capability.IntentClassification {
+	if got.Model != "intent-classification" {
 		t.Fatalf("Model = %q", got.Model)
 	}
 	if got.Object != ObjectChatCompletion {
@@ -144,7 +144,7 @@ func TestCompletionFromEventJSONString(t *testing.T) {
 }
 
 func TestModelListIDsAreCapabilities(t *testing.T) {
-	list := modelList()
+	list := modelList(testfixture.Registry())
 	if list.Object != ObjectList {
 		t.Fatalf("object = %q", list.Object)
 	}
@@ -155,9 +155,13 @@ func TestModelListIDsAreCapabilities(t *testing.T) {
 			t.Fatal("must not list Ollama model names")
 		}
 	}
-	for _, name := range capability.Known() {
+	for _, name := range testfixture.Names() {
 		if !got[name] {
 			t.Fatalf("missing capability %q", name)
 		}
 	}
+}
+
+func eventFromTestRequest(req ChatCompletionRequest, organisationID string) (*cloudevent.Event, *requestError) {
+	return eventFromRequest(req, organisationID, testfixture.Registry())
 }

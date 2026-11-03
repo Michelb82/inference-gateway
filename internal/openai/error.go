@@ -67,6 +67,11 @@ func errorFromFailedEvent(event *cloudevent.Event) (status int, message, errType
 	raw := event.Data["error"]
 	switch typed := raw.(type) {
 	case map[string]any:
+		if typed["code"] == "invalid_prompt_variable" {
+			message, _ := typed["message"].(string)
+			param, _ := typed["param"].(string)
+			return http.StatusBadRequest, message, "invalid_request_error", param, "invalid_prompt_variable"
+		}
 		reason, _ := typed["reason"].(string)
 		maxChars := typed["max_characters"]
 		if strings.Contains(strings.ToLower(reason), "outside bounds") {
@@ -91,7 +96,7 @@ func errorFromFailedEvent(event *cloudevent.Event) (status int, message, errType
 		return http.StatusForbidden, message, "invalid_request_error", "messages", "system_prompt_denied"
 	case strings.Contains(lower, "model unavailable"):
 		return http.StatusServiceUnavailable, message, "server_error", "model", "model_unavailable"
-	case strings.Contains(lower, "unknown capability"):
+	case strings.Contains(lower, "unknown capability") || (strings.Contains(lower, "capability") && strings.Contains(lower, "is not configured")):
 		return http.StatusBadRequest, message, "invalid_request_error", "model", "unknown_model"
 	case strings.Contains(lower, "data.model is not allowed"):
 		return http.StatusBadRequest, message, "invalid_request_error", "model", "model_not_allowed"

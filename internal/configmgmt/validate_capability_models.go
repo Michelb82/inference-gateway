@@ -2,40 +2,34 @@ package configmgmt
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/mywebsite/construction-ai-gateway/internal/capability"
 )
 
-// Input limits are mandatory on every ranked capability binding.
+// Input limits are shared with direct registry construction.
 const (
-	MinInputChars = 200
-	MaxInputChars = 500000
+	MinInputChars = capability.MinInputChars
+	MaxInputChars = capability.MaxInputChars
 )
-
-func validateMaxInputChars(name string, limit int) error {
-	if limit == 0 {
-		return fmt.Errorf("capability %s has not defined max_input_chars please see documentation", name)
-	}
-	if limit < MinInputChars || limit > MaxInputChars {
-		return fmt.Errorf("capability %s max_input_chars must be an integer between %d and %d", name, MinInputChars, MaxInputChars)
-	}
-	return nil
-}
 
 // validateCapabilityModels checks manifest.capability_models.
 func validateCapabilityModels(bindings map[string][]RankedModelRef, endpointsByID map[string]Endpoint) error {
 	if len(bindings) == 0 {
 		return fmt.Errorf("manifest.capability_models must not be empty")
 	}
-	for capName := range bindings {
-		if !capability.IsKnown(capName) {
-			return fmt.Errorf("manifest.capability_models has unknown capability %q", capName)
-		}
+	names := make([]string, 0, len(bindings))
+	for name := range bindings {
+		names = append(names, name)
 	}
-	for _, required := range capability.Known() {
-		refs, ok := bindings[required]
-		if !ok || len(refs) == 0 {
+	sort.Strings(names)
+	for _, required := range names {
+		if err := capability.ValidateID(required); err != nil {
+			return err
+		}
+		refs := bindings[required]
+		if len(refs) == 0 {
 			return fmt.Errorf("manifest.capability_models missing entries for %q", required)
 		}
 		seenRanks := make(map[int]struct{}, len(refs))
@@ -55,11 +49,8 @@ func validateCapabilityModels(bindings map[string][]RankedModelRef, endpointsByI
 			if _, ok := endpointsByID[modelID]; !ok {
 				return fmt.Errorf("manifest.capability_models[%q] references unknown model id %q", required, modelID)
 			}
-			if err := validateMaxInputChars(required, ref.MaxInputChars); err != nil {
+			if err := capability.ValidateDefinition(required, behaviorBinding(ref)); err != nil {
 				return err
-			}
-			if strings.TrimSpace(ref.SystemPrompt) == "" {
-				return fmt.Errorf("capability %s has not defined system_prompt please see documentation", required)
 			}
 		}
 		if !hasRank0 {
@@ -68,4 +59,10 @@ func validateCapabilityModels(bindings map[string][]RankedModelRef, endpointsByI
 	}
 
 	return nil
+}
+
+// behaviorBinding maps the manifest behavior to the shared validation contract.
+func behaviorBinding(ref RankedModelRef) capability.ModelBinding {
+	return capability.ModelBinding{SystemPrompt: ref.SystemPrompt, MaxInputChars: ref.MaxInputChars,
+		InputField: ref.InputField, PromptVariables: ref.PromptVariables, OutputSchema: ref.OutputSchema}
 }

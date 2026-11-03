@@ -3,6 +3,8 @@ package worker
 import (
 	"context"
 	"errors"
+	"fmt"
+	"github.com/mywebsite/construction-ai-gateway/internal/testfixture"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -18,7 +20,7 @@ import (
 )
 
 func testRegistry() *capability.Registry {
-	return capability.NewRegistry(
+	return testfixture.NewRegistry(
 		capability.ModelBinding{SystemPrompt: "Test prompt from {source_locale} to {target_locale}.", BaseURL: "http://llm-model:11434", Model: "qwen3:1.7b-q4_K_M", KeepAlive: "5m", MaxInputChars: 200},
 		capability.ModelBinding{SystemPrompt: "Test prompt from {source_locale} to {target_locale}.", BaseURL: "http://llm-model:11434", Model: "qwen3:4b-q4_K_M", KeepAlive: "5m", MaxInputChars: 8000},
 		capability.ModelBinding{SystemPrompt: "Test prompt from {source_locale} to {target_locale}.", BaseURL: "http://llm-model:11434", Model: "qwen3:14b-q4_K_M", KeepAlive: "2m", MaxInputChars: 16000},
@@ -90,7 +92,7 @@ func TestHandleCompleteDoesNotListModels(t *testing.T) {
 		Model:         "gpt-4o-mini",
 		MaxInputChars: 8000,
 	}
-	reg := capability.NewRegistry(binding, binding, binding)
+	reg := testfixture.NewRegistry(binding, binding, binding)
 	w := New(nil, &fakePublisher{}, inference.NewRouter("DEV_KEY"), reg, nil, nil)
 	if err := w.handle(context.Background(), mustEvent(t, "request_intent.json")); err != nil {
 		t.Fatalf("handle() error = %v", err)
@@ -356,15 +358,15 @@ func TestHandleAllowlistedOrgWithoutSystemPromptUsesCapabilitySchema(t *testing.
 	if publisher.events[0].Type != cloudevent.EventTypeRequestCompleted {
 		t.Fatalf("Type = %q", publisher.events[0].Type)
 	}
-	if ollama.systemPrompt != "Test prompt from {source_locale} to {target_locale}." {
+	if ollama.systemPrompt != "Test prompt from Dutch to English." {
 		t.Fatalf("expected configured routing system prompt, got %q", ollama.systemPrompt)
 	}
 	result := publisher.events[0].Data["result"].(map[string]any)
 	if result["capability"] != "intent-classification" {
 		t.Fatalf("result = %v", result)
 	}
-	if _, ok := result["extra"]; ok {
-		t.Fatalf("capability schema should drop extra fields, got %v", result)
+	if result["extra"] != "ignored" {
+		t.Fatalf("capability schema must preserve extra fields, got %v", result)
 	}
 }
 
@@ -638,4 +640,80 @@ func (f *fakeOllama) Complete(ctx context.Context, req inference.CompleteRequest
 		return "", f.err
 	}
 	return f.result, nil
+}
+
+type reloadingLLM struct {
+	holder      *capability.Holder
+	replacement *capability.Registry
+}
+
+func (f *reloadingLLM) Complete(ctx context.Context, req inference.CompleteRequest) (string, error) {
+	f.holder.Store(f.replacement)
+	return `{"original":"valid"}`, nil
+}
+func TestWorkerRetainsDefinitionAcrossReloadAndFailsRemovedQueuedCapability(t *testing.T) {
+	b := capability.ModelBinding{BaseURL: "http://llm", Model: "test", InputField: "message", SystemPrompt: "Original prompt.", MaxInputChars: 200, OutputSchema: &capability.OutputSchema{Type: "object", Required: []string{"original"}, Properties: map[string]capability.PropertySchema{"original": {Type: "string"}}}}
+	reg, err := capability.NewRegistryFromBindings(map[string]capability.ModelBinding{"custom": b})
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacement, err := capability.NewRegistryFromBindings(map[string]capability.ModelBinding{"replacement": b})
+	if err != nil {
+		t.Fatal(err)
+	}
+	holder := capability.NewHolder()
+	holder.Store(reg)
+	publisher := &fakePublisher{}
+	w := New(nil, publisher, &reloadingLLM{holder: holder, replacement: replacement}, holder, nil, nil)
+	event := mustEvent(t, "request_intent.json")
+	event.Data["capability"] = "custom"
+	if err := w.handle(context.Background(), event); err != nil {
+		t.Fatal(err)
+	}
+	if len(publisher.events) != 1 || publisher.events[0].Type != cloudevent.EventTypeRequestCompleted {
+		t.Fatalf("in-flight request used new registry: %+v", publisher.events)
+	}
+	if err := w.handle(context.Background(), event); err != nil {
+		t.Fatal(err)
+	}
+	failed := publisher.events[1]
+	if failed.Type != cloudevent.EventTypeRequestFailed || failed.Subject == nil || *failed.Subject != event.ID || !strings.Contains(fmt.Sprint(failed.Data["error"]), "is not configured") {
+		t.Fatalf("removed queued request = %+v", failed)
+	}
+}
+
+func TestWorkerRevalidatesQueuedVariableSelectionAfterReload(t *testing.T) {
+	b := capability.ModelBinding{BaseURL: "http://llm", Model: "test", InputField: "message", MaxInputChars: 200, SystemPrompt: "Use {target_locale}.", PromptVariables: map[string]capability.PromptVariable{"target_locale": {Default: "en", Allowed: []string{"en", "nl", "pl"}}}}
+	reg, err := capability.NewRegistryFromBindings(map[string]capability.ModelBinding{"custom": b})
+	if err != nil {
+		t.Fatal(err)
+	}
+	holder := capability.NewHolder()
+	holder.Store(reg)
+	event := mustEvent(t, "request_intent.json")
+	event.Data["capability"] = "custom"
+	event.Data["input"].(map[string]any)["target_locale"] = "pl"
+	if _, _, err := capability.BuildPrompts(reg.All()[0], event.Data["input"].(map[string]any)); err != nil {
+		t.Fatal(err)
+	}
+	b.PromptVariables["target_locale"] = capability.PromptVariable{Default: "en", Allowed: []string{"en", "nl"}}
+	replacement, err := capability.NewRegistryFromBindings(map[string]capability.ModelBinding{"custom": b})
+	if err != nil {
+		t.Fatal(err)
+	}
+	holder.Store(replacement)
+	publisher := &fakePublisher{}
+	llm := &fakeOllama{result: `{"ok":true}`}
+	w := New(nil, publisher, llm, holder, nil, nil)
+	if err := w.handle(context.Background(), event); err != nil {
+		t.Fatal(err)
+	}
+	if llm.called {
+		t.Fatal("invalid locale reached inference")
+	}
+	failed := publisher.events[0]
+	field, ok := failed.Data["error"].(map[string]any)
+	if failed.Type != cloudevent.EventTypeRequestFailed || !ok || field["code"] != "invalid_prompt_variable" || field["param"] != "target_locale" {
+		t.Fatalf("queued failure=%+v", failed)
+	}
 }

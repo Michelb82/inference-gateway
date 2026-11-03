@@ -3,6 +3,7 @@ package configmgmt
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -18,7 +19,14 @@ func Resolve(m Manifest) (Snapshot, error) {
 		endpointsByID[strings.TrimSpace(endpoint.ID)] = endpoint
 	}
 
-	known := capability.Known()
+	if err := Validate(m); err != nil {
+		return Snapshot{}, err
+	}
+	known := make([]string, 0, len(m.CapabilityModels))
+	for name := range m.CapabilityModels {
+		known = append(known, name)
+	}
+	sort.Strings(known)
 	bindings := make(map[string]ModelBinding, len(known))
 	for _, capName := range known {
 		refs := m.CapabilityModels[capName]
@@ -36,12 +44,6 @@ func Resolve(m Manifest) (Snapshot, error) {
 		if !ok {
 			return Snapshot{}, fmt.Errorf("capability %s references unknown model %q", capName, primary.Model)
 		}
-		if err := validateMaxInputChars(capName, primary.MaxInputChars); err != nil {
-			return Snapshot{}, err
-		}
-		if strings.TrimSpace(primary.SystemPrompt) == "" {
-			return Snapshot{}, fmt.Errorf("capability %s has not defined system_prompt please see documentation", capName)
-		}
 		vendor, err := inference.ParseVendor(endpoint.Vendor)
 		if err != nil {
 			return Snapshot{}, fmt.Errorf("capability %s: %w", capName, err)
@@ -51,13 +53,24 @@ func Resolve(m Manifest) (Snapshot, error) {
 			keepAlive = fmt.Sprintf("%ds", endpoint.KeepAliveSeconds)
 		}
 		bindings[capName] = ModelBinding{
-			Vendor:        vendor,
-			BaseURL:       strings.TrimRight(strings.TrimSpace(endpoint.URL), "/"),
-			Model:         strings.TrimSpace(endpoint.Model),
-			KeepAlive:     keepAlive,
-			MaxInputChars: primary.MaxInputChars,
-			SystemPrompt:  strings.TrimSpace(primary.SystemPrompt),
+			Vendor:          vendor,
+			BaseURL:         strings.TrimRight(strings.TrimSpace(endpoint.URL), "/"),
+			Model:           strings.TrimSpace(endpoint.Model),
+			KeepAlive:       keepAlive,
+			MaxInputChars:   primary.MaxInputChars,
+			SystemPrompt:    strings.TrimSpace(primary.SystemPrompt),
+			InputField:      primary.InputField,
+			PromptVariables: primary.PromptVariables,
+			OutputSchema:    primary.OutputSchema,
 		}
+	}
+	// The registry copies schema trees and variable maps; snapshots own their data.
+	registry, err := capability.NewRegistryFromBindings(bindings)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	for _, def := range registry.All() {
+		bindings[def.Name] = def.ModelBinding
 	}
 	tools := make(map[string]Tool, len(m.Tools))
 	for _, configured := range m.Tools {
@@ -121,7 +134,8 @@ func fingerprint(s Snapshot) string {
 	sort.Strings(keys)
 	for _, k := range keys {
 		b := s.Bindings[k]
-		parts = append(parts, k, b.Vendor, b.BaseURL, b.Model, b.KeepAlive, fmt.Sprintf("%d", b.MaxInputChars), b.SystemPrompt)
+		encoded, _ := json.Marshal(b)
+		parts = append(parts, k, string(encoded))
 	}
 	toolNames := make([]string, 0, len(s.Tools))
 	for name := range s.Tools {

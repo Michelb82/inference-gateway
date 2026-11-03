@@ -179,7 +179,7 @@ func (w *Worker) handle(ctx context.Context, event *cloudevent.Event) error {
 		// Authorized caller-owned prompt ⇒ caller-owned response schema.
 		result, err = capability.ParseRawJSON(raw)
 	} else {
-		result, err = capability.ParseResult(capabilityName, raw)
+		result, err = capability.ParseResult(def, raw)
 	}
 	if err != nil {
 		return w.publishFailure(ctx, event, capabilityName, err)
@@ -290,6 +290,8 @@ func (w *Worker) publishFailure(ctx context.Context, event *cloudevent.Event, ca
 	var errorField any
 	if boundsErr, ok := cause.(capability.PromptBoundsError); ok {
 		errorField = boundsErr.ToMap()
+	} else if variableErr, ok := cause.(*capability.PromptVariableError); ok {
+		errorField = variableErr.ToMap()
 	} else {
 		errorField = cause.Error()
 	}

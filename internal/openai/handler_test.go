@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/mywebsite/construction-ai-gateway/internal/testfixture"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -51,12 +52,22 @@ func (f *fakeQueue) Wait(ctx context.Context, requestID string, timeout time.Dur
 }
 
 type staticSource struct {
-	q Queue
+	q   Queue
+	reg *capability.Registry
 }
 
-func (s staticSource) InferenceQueue() Queue { return s.q }
+func (s staticSource) InferenceRuntime() (Queue, *capability.Registry) {
+	if s.q == nil {
+		return nil, nil
+	}
+	reg := s.reg
+	if reg == nil {
+		reg = testfixture.Registry()
+	}
+	return s.q, reg
+}
 
-func testMux(source QueueSource) *http.ServeMux {
+func testMux(source RuntimeSource) *http.ServeMux {
 	mux := http.NewServeMux()
 	NewHandler(source, nil).Register(mux)
 	return mux
@@ -156,7 +167,7 @@ func TestHandleCompletionsSuccess(t *testing.T) {
 			Type:    cloudevent.EventTypeRequestCompleted,
 			Subject: &subject,
 			Data: map[string]any{
-				"capability": capability.IntentClassification,
+				"capability": "intent-classification",
 				"result":     map[string]any{"intent": "wall-painting", "confidence": 0.95},
 			},
 		},
@@ -174,7 +185,7 @@ func TestHandleCompletionsSuccess(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if got.Model != capability.IntentClassification {
+	if got.Model != "intent-classification" {
 		t.Fatalf("model = %q", got.Model)
 	}
 	if got.Object != ObjectChatCompletion {

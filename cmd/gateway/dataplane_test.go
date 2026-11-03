@@ -71,7 +71,7 @@ func TestApplyEnsureModelsFailureLeavesLivePlaneUntouched(t *testing.T) {
 	if !holder.Ready() {
 		t.Fatal("registry not ready after first Apply")
 	}
-	before, err := holder.Get(capability.Routing)
+	before, err := holder.Get("routing")
 	if err != nil {
 		t.Fatalf("Get(routing) after first Apply: %v", err)
 	}
@@ -93,7 +93,7 @@ func TestApplyEnsureModelsFailureLeavesLivePlaneUntouched(t *testing.T) {
 		t.Fatal("second Apply() expected EnsureModels failure")
 	}
 
-	after, err := holder.Get(capability.Routing)
+	after, err := holder.Get("routing")
 	if err != nil {
 		t.Fatalf("Get(routing) after failed Apply: %v", err)
 	}
@@ -166,7 +166,8 @@ func TestApplyContinuesWhenOpenAIAdapterDisabled(t *testing.T) {
 	t.Cleanup(plane.Stop)
 
 	ollamaBinding := configmgmt.ModelBinding{
-		SystemPrompt:  "Test prompt from {source_locale} to {target_locale}.",
+		SystemPrompt: "Test prompt from {source_locale} to {target_locale}.",
+		InputField:   "message", PromptVariables: map[string]capability.PromptVariable{"source_locale": {Default: "nl", Allowed: []string{"nl", "en", "de"}}, "target_locale": {Default: "en", Allowed: []string{"en", "nl", "pl", "fr"}}},
 		Vendor:        inference.VendorOllama,
 		BaseURL:       ollamaSrv.URL,
 		Model:         "local:latest",
@@ -174,7 +175,8 @@ func TestApplyContinuesWhenOpenAIAdapterDisabled(t *testing.T) {
 		MaxInputChars: 1000,
 	}
 	openaiBinding := configmgmt.ModelBinding{
-		SystemPrompt:  "Test prompt from {source_locale} to {target_locale}.",
+		SystemPrompt: "Test prompt from {source_locale} to {target_locale}.",
+		InputField:   "message", PromptVariables: map[string]capability.PromptVariable{"source_locale": {Default: "nl", Allowed: []string{"nl", "en", "de"}}, "target_locale": {Default: "en", Allowed: []string{"en", "nl", "pl", "fr"}}},
 		Vendor:        inference.VendorOpenAI,
 		BaseURL:       "https://api.openai.com",
 		Model:         "gpt-4o-mini",
@@ -191,12 +193,12 @@ func TestApplyContinuesWhenOpenAIAdapterDisabled(t *testing.T) {
 		PriorityHighCount:    3,
 		PriorityMediumCount:  3,
 		Bindings: map[string]configmgmt.ModelBinding{
-			capability.Routing:              ollamaBinding,
-			capability.IntentClassification: ollamaBinding,
-			capability.ParameterExtraction:  openaiBinding,
-			capability.PersonalDetails:      openaiBinding,
-			capability.Translate:            openaiBinding,
-			capability.ConfigureEnvironment: openaiBinding,
+			"routing":                     ollamaBinding,
+			"intent-classification":       ollamaBinding,
+			"parameter-extraction":        openaiBinding,
+			"personal-details-extraction": openaiBinding,
+			"translate":                   openaiBinding,
+			"configure-environment":       openaiBinding,
 		},
 	}
 	if err := plane.Apply(snap, true); err != nil {
@@ -239,7 +241,8 @@ func TestApplySucceedsWhenOpenAICatalogOmitsNamedModel(t *testing.T) {
 	t.Cleanup(plane.Stop)
 
 	openaiBinding := configmgmt.ModelBinding{
-		SystemPrompt:  "Test prompt from {source_locale} to {target_locale}.",
+		SystemPrompt: "Test prompt from {source_locale} to {target_locale}.",
+		InputField:   "message", PromptVariables: map[string]capability.PromptVariable{"source_locale": {Default: "nl", Allowed: []string{"nl", "en", "de"}}, "target_locale": {Default: "en", Allowed: []string{"en", "nl", "pl", "fr"}}},
 		Vendor:        inference.VendorOpenAI,
 		BaseURL:       openaiSrv.URL,
 		Model:         "gpt-4o-mini",
@@ -256,12 +259,12 @@ func TestApplySucceedsWhenOpenAICatalogOmitsNamedModel(t *testing.T) {
 		PriorityHighCount:    3,
 		PriorityMediumCount:  3,
 		Bindings: map[string]configmgmt.ModelBinding{
-			capability.Routing:              openaiBinding,
-			capability.IntentClassification: openaiBinding,
-			capability.ParameterExtraction:  openaiBinding,
-			capability.PersonalDetails:      openaiBinding,
-			capability.Translate:            openaiBinding,
-			capability.ConfigureEnvironment: openaiBinding,
+			"routing":                     openaiBinding,
+			"intent-classification":       openaiBinding,
+			"parameter-extraction":        openaiBinding,
+			"personal-details-extraction": openaiBinding,
+			"translate":                   openaiBinding,
+			"configure-environment":       openaiBinding,
 		},
 	}
 	if err := plane.Apply(snap, true); err != nil {
@@ -297,7 +300,8 @@ func TestApplyOpenAIOnlyDoesNotRequireOllama(t *testing.T) {
 	t.Cleanup(plane.Stop)
 
 	openaiBinding := configmgmt.ModelBinding{
-		SystemPrompt:  "Test prompt from {source_locale} to {target_locale}.",
+		SystemPrompt: "Test prompt from {source_locale} to {target_locale}.",
+		InputField:   "message", PromptVariables: map[string]capability.PromptVariable{"source_locale": {Default: "nl", Allowed: []string{"nl", "en", "de"}}, "target_locale": {Default: "en", Allowed: []string{"en", "nl", "pl", "fr"}}},
 		Vendor:        inference.VendorOpenAI,
 		BaseURL:       openaiSrv.URL,
 		Model:         "",
@@ -314,12 +318,12 @@ func TestApplyOpenAIOnlyDoesNotRequireOllama(t *testing.T) {
 		PriorityHighCount:    3,
 		PriorityMediumCount:  3,
 		Bindings: map[string]configmgmt.ModelBinding{
-			capability.Routing:              openaiBinding,
-			capability.IntentClassification: openaiBinding,
-			capability.ParameterExtraction:  openaiBinding,
-			capability.PersonalDetails:      openaiBinding,
-			capability.Translate:            openaiBinding,
-			capability.ConfigureEnvironment: openaiBinding,
+			"routing":                     openaiBinding,
+			"intent-classification":       openaiBinding,
+			"parameter-extraction":        openaiBinding,
+			"personal-details-extraction": openaiBinding,
+			"translate":                   openaiBinding,
+			"configure-environment":       openaiBinding,
 		},
 	}
 	if err := plane.Apply(snap, true); err != nil {
@@ -332,7 +336,8 @@ func TestApplyOpenAIOnlyDoesNotRequireOllama(t *testing.T) {
 
 func testSnapshot(redisAddr, llmURL, model, fingerprint, prefix string) configmgmt.Snapshot {
 	binding := configmgmt.ModelBinding{
-		SystemPrompt:  "Test prompt from {source_locale} to {target_locale}.",
+		SystemPrompt: "Test prompt from {source_locale} to {target_locale}.",
+		InputField:   "message", PromptVariables: map[string]capability.PromptVariable{"source_locale": {Default: "nl", Allowed: []string{"nl", "en", "de"}}, "target_locale": {Default: "en", Allowed: []string{"en", "nl", "pl", "fr"}}},
 		Vendor:        inference.VendorOllama,
 		BaseURL:       llmURL,
 		Model:         model,
@@ -350,12 +355,12 @@ func testSnapshot(redisAddr, llmURL, model, fingerprint, prefix string) configmg
 		PriorityHighCount:    3,
 		PriorityMediumCount:  3,
 		Bindings: map[string]configmgmt.ModelBinding{
-			capability.Routing:              binding,
-			capability.IntentClassification: binding,
-			capability.ParameterExtraction:  binding,
-			capability.PersonalDetails:      binding,
-			capability.Translate:            binding,
-			capability.ConfigureEnvironment: binding,
+			"routing":                     binding,
+			"intent-classification":       binding,
+			"parameter-extraction":        binding,
+			"personal-details-extraction": binding,
+			"translate":                   binding,
+			"configure-environment":       binding,
 		},
 	}
 }
@@ -375,14 +380,14 @@ func TestApplyReloadsManifestPromptWithoutRestartingQueue(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := plane.InferenceQueue()
-	binding := snap.Bindings[capability.Routing]
+	binding := snap.Bindings["routing"]
 	binding.SystemPrompt = "Updated manifest prompt."
-	snap.Bindings[capability.Routing] = binding
+	snap.Bindings["routing"] = binding
 	snap.Fingerprint = "after"
 	if err := plane.Apply(snap, false); err != nil {
 		t.Fatal(err)
 	}
-	def, err := holder.Get(capability.Routing)
+	def, err := holder.Get("routing")
 	if err != nil {
 		t.Fatal(err)
 	}

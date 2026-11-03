@@ -4,7 +4,7 @@
 
 An operator can add, edit, or remove a capability through a valid manifest update, without Go code changes or a rebuild. A manifest containing only one capability is valid. HTTP requests, model listing, health reporting, and workers all use the active registry. A capability name does not select a hidden implementation in Go.
 
-This builds on GW-14 (segmented validation), GW-15 (mandatory input limits), and GW-16 (manifest system prompts). This plan introduces no executable changes.
+This builds on GW-14 (segmented validation), GW-15 (mandatory input limits), and GW-16 (manifest system prompts). Implementation is recorded in `feature/gw-17.md`. The registry now follows the package split below; runtime schema/property metadata is prepared during registration.
 
 ## Proposed manifest contract
 
@@ -40,10 +40,10 @@ The example is the capability_models segment; inference_endpoint, ingress, and c
 - input_field is required and selects message or text as the internal input key. It describes transport mapping, not capability identity. The last HTTP user message remains the user input.
 - output_schema is optional. Without it, require a nonempty JSON object, matching the current generic JSON contract.
 - When present, output_schema declares a documented, limited JSON Schema subset: object type, required fields, properties, primitive property types, string minLength, and numeric minimum/maximum. Reject unsupported keywords or malformed schemas during manifest validation; do not silently ignore rules. No remote references or executable validators. Preserve extra result fields by default; schema validation does not silently strip them.
-- Optional prompt_variables declares supported source_locale and target_locale variables and their defaults. These names map to the existing HTTP extras. Keep Dutch/English labels for nl/en and literal codes for other locales. Replace only declared named placeholders. Reject unknown placeholders/declarations during manifest validation. Literal percent signs stay unchanged.
+- Optional prompt_variables declares supported source_locale and target_locale variables as objects with required default and allowed fields. Each allowed list must be nonempty, contain unique nonblank values, and include its nonblank default. One capability supports every configured source/target pair. Invalid request selections return 400 before enqueueing and are checked again by workers after reloads; authorized prompt overrides do not bypass allowed values. These names map to the existing HTTP extras. Keep Dutch/English labels for nl/en and literal codes for other locales. Match configured codes case-sensitively after whitespace trimming. Replace only declared named placeholders. Reject legacy string-valued variables and unknown placeholders/declarations during manifest validation. Literal percent signs stay unchanged.
 - Trusted manifest prompts must produce the configured output contract. Caller overrides retain the existing organisation allowlist, size cap, verbatim handling, and generic JSON parsing bypass.
 
-For translation, explicitly declare input_field=text and prompt_variables with source_locale=nl and target_locale=en defaults. Other capabilities can use the same behavior without being named translate. Do not introduce a general scripting or template execution language.
+For translation, explicitly declare input_field=text and prompt_variables with source_locale={default: nl, allowed: [nl, en]} and target_locale={default: en, allowed: [en, nl, pl]}. Other capabilities can use the same behavior without being named translate. Do not introduce a general scripting or template execution language.
 
 ## Implementation sequence
 
@@ -120,6 +120,7 @@ Document migration of deployed manifests before rollout. Existing HTTP capabilit
 - Change prompts, mappings, schema, and variable defaults independently; each changes the fingerprint and active behavior. Reordering JSON maps does not change the fingerprint.
 - Reject missing/blank prompts, missing limits, 199/500001 limits, noninteger limits, invalid IDs, missing rank 0, invalid endpoint references, malformed schemas, unsupported schema keywords, and unsupported prompt variables. Accept limits 200 and 500000.
 - Verify generic message/text inputs, Unicode character bounds, translation defaults, arbitrary percent signs, output schema failures, generic JSON output, caller override policy, tool execution, and existing priority/correlation behavior.
+- Verify one capability handles all allowed language pairs, disallowed selections never reach inference, defaults belong to allowed lists, and allowed slices are copied across snapshots.
 - Test concurrent manifest reloads against HTTP and worker processing; run the race detector for these new concurrency tests.
 - Verify invalid updates retain the old runtime and dormant discovery remains available.
 - Verify manifest validation and direct registry construction enforce the same definition rules, invalid registration leaves the active holder untouched, and callers cannot mutate registered schemas/variables through returned definitions.

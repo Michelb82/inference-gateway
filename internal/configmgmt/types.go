@@ -1,8 +1,10 @@
 package configmgmt
 
+import "github.com/mywebsite/construction-ai-gateway/internal/capability"
+
 // Manifest is the ops/bindings document supplied locally or by AI Manager.
-// Capability IDs, input shapes, and result parsers live in the capability package.
-// This document supplies inference endpoints, system prompts, and input limits.
+// The manifest declares capability IDs, input mapping, prompts, limits, and output
+// contracts. The capability package supplies their shared validation and execution.
 type Manifest struct {
 	InferenceEndpoint []Endpoint                  `json:"inference_endpoint"`
 	CapabilityModels  map[string][]RankedModelRef `json:"capability_models"`
@@ -26,10 +28,13 @@ type Endpoint struct {
 }
 
 type RankedModelRef struct {
-	Rank          int    `json:"rank"`
-	Model         string `json:"model"`
-	MaxInputChars int    `json:"max_input_chars"`
-	SystemPrompt  string `json:"system_prompt"`
+	Rank            int                                  `json:"rank"`
+	Model           string                               `json:"model"`
+	MaxInputChars   int                                  `json:"max_input_chars"`
+	SystemPrompt    string                               `json:"system_prompt"`
+	InputField      string                               `json:"input_field"`
+	PromptVariables map[string]capability.PromptVariable `json:"prompt_variables,omitempty"`
+	OutputSchema    *capability.OutputSchema             `json:"output_schema,omitempty"`
 }
 
 // Ingress is the internal Redis work queue (not the producer contract).
@@ -53,14 +58,7 @@ type RuntimeConfig struct {
 }
 
 // ModelBinding is the resolved rank-0 binding for a capability.
-type ModelBinding struct {
-	Vendor        string
-	BaseURL       string
-	Model         string
-	KeepAlive     string
-	MaxInputChars int
-	SystemPrompt  string
-}
+type ModelBinding = capability.ModelBinding
 
 // Snapshot is the resolved runtime configuration applied to the data plane.
 type Snapshot struct {

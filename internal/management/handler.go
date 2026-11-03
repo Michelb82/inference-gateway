@@ -11,23 +11,38 @@ import (
 )
 
 const (
-	ContractVersion  = "1"
-	ManifestFormat   = "1"
+	ContractVersion  = "2"
+	ManifestFormat   = "2"
 	MaxManifestBytes = 1 << 20
 )
 
+type promptVariableSupport struct {
+	RequiredFields       []string `json:"required_fields"`
+	AllowedNonempty      bool     `json:"allowed_nonempty"`
+	AllowedUnique        bool     `json:"allowed_unique"`
+	DefaultMustBeAllowed bool     `json:"default_must_be_allowed"`
+	Matching             string   `json:"matching"`
+}
+
 type capabilitySupport struct {
-	ID                    string `json:"id"`
-	MinInputChars         int    `json:"min_input_chars"`
-	MaxInputChars         int    `json:"max_input_chars"`
-	MaxInputCharsRequired bool   `json:"max_input_chars_required"`
-	SystemPromptRequired  bool   `json:"system_prompt_required"`
+	Dynamic                  bool                  `json:"dynamic"`
+	IDPattern                string                `json:"id_pattern"`
+	InputFields              []string              `json:"input_fields"`
+	InputFieldRequired       bool                  `json:"input_field_required"`
+	PromptVariables          []string              `json:"prompt_variables"`
+	PromptVariableDefinition promptVariableSupport `json:"prompt_variable_definition"`
+	OutputSchemaKeywords     []string              `json:"output_schema_keywords"`
+	OutputPropertyTypes      []string              `json:"output_property_types"`
+	MinInputChars            int                   `json:"min_input_chars"`
+	MaxInputChars            int                   `json:"max_input_chars"`
+	MaxInputCharsRequired    bool                  `json:"max_input_chars_required"`
+	SystemPromptRequired     bool                  `json:"system_prompt_required"`
 }
 
 type supportResponse struct {
 	ContractVersion  string                    `json:"contract_version"`
 	ManifestFormat   string                    `json:"manifest_format"`
-	Capabilities     []capabilitySupport       `json:"capabilities"`
+	Capabilities     capabilitySupport         `json:"capabilities"`
 	InferenceVendors []inference.VendorSupport `json:"inference_vendors"`
 	IngressAdapters  []string                  `json:"ingress_adapters"`
 	MaxManifestBytes int                       `json:"max_manifest_bytes"`
@@ -52,10 +67,13 @@ func handleSupport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	capabilities := make([]capabilitySupport, 0, len(capability.Known()))
-	for _, id := range capability.Known() {
-		capabilities = append(capabilities, capabilitySupport{ID: id, MinInputChars: configmgmt.MinInputChars, MaxInputChars: configmgmt.MaxInputChars, MaxInputCharsRequired: true, SystemPromptRequired: true})
-	}
+	capabilities := capabilitySupport{Dynamic: true, InputFieldRequired: true, IDPattern: "[a-z][a-z0-9-]*",
+		InputFields: []string{"message", "text"}, PromptVariables: []string{"source_locale", "target_locale"},
+		PromptVariableDefinition: promptVariableSupport{RequiredFields: []string{"default", "allowed"}, AllowedNonempty: true, AllowedUnique: true, DefaultMustBeAllowed: true, Matching: "case-sensitive"},
+		OutputSchemaKeywords:     []string{"type", "required", "properties", "minLength", "minimum", "maximum"},
+		OutputPropertyTypes:      []string{"string", "number", "integer", "boolean", "null"},
+		MinInputChars:            capability.MinInputChars, MaxInputChars: capability.MaxInputChars,
+		MaxInputCharsRequired: true, SystemPromptRequired: true}
 	writeJSON(w, http.StatusOK, supportResponse{
 		ContractVersion: ContractVersion, ManifestFormat: ManifestFormat,
 		Capabilities: capabilities, InferenceVendors: inference.SupportedVendors(),

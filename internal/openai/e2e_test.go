@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/mywebsite/construction-ai-gateway/internal/testfixture"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -32,7 +33,7 @@ func TestE2EIntentSuccess(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if got.Model != capability.IntentClassification {
+	if got.Model != "intent-classification" {
 		t.Fatalf("model = %q", got.Model)
 	}
 	if ollama.model != "qwen3:4b-q4_K_M" {
@@ -152,7 +153,7 @@ func newE2E(t *testing.T, byPrompt map[string]string) (*http.ServeMux, *e2eOllam
 		ollama.translate = `{"text":"Electrical installations for homes"}`
 	}
 
-	reg := capability.NewRegistry(
+	reg := testfixture.NewRegistry(
 		capability.ModelBinding{SystemPrompt: "Test prompt from {source_locale} to {target_locale}.", BaseURL: "http://llm-model:11434", Model: "qwen3:1.7b-q4_K_M", KeepAlive: "5m", MaxInputChars: 200},
 		capability.ModelBinding{SystemPrompt: "Test prompt from {source_locale} to {target_locale}.", BaseURL: "http://llm-model:11434", Model: "qwen3:4b-q4_K_M", KeepAlive: "5m", MaxInputChars: 8000},
 		capability.ModelBinding{SystemPrompt: "Test prompt from {source_locale} to {target_locale}.", BaseURL: "http://llm-model:11434", Model: "qwen3:14b-q4_K_M", KeepAlive: "2m", MaxInputChars: 16000},

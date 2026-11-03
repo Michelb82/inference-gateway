@@ -2,6 +2,7 @@ package openai
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -11,7 +12,7 @@ import (
 	"github.com/mywebsite/construction-ai-gateway/internal/cloudevent"
 )
 
-func eventFromRequest(req ChatCompletionRequest, organisationID string) (*cloudevent.Event, *requestError) {
+func eventFromRequest(req ChatCompletionRequest, organisationID string, registry *capability.Registry) (*cloudevent.Event, *requestError) {
 	if req.Stream != nil && *req.Stream {
 		return nil, newRequestError(http.StatusBadRequest, "stream is not supported", "invalid_request_error", "stream", "stream_not_supported")
 	}
@@ -20,7 +21,8 @@ func eventFromRequest(req ChatCompletionRequest, organisationID string) (*cloude
 	if model == "" {
 		return nil, newRequestError(http.StatusBadRequest, "model is required", "invalid_request_error", "model", "missing_model")
 	}
-	if !capability.IsKnown(model) {
+	def, lookupErr := registry.Get(model)
+	if lookupErr != nil {
 		return nil, newRequestError(http.StatusBadRequest, fmt.Sprintf("unknown model: %s", model), "invalid_request_error", "model", "unknown_model")
 	}
 
@@ -33,16 +35,27 @@ func eventFromRequest(req ChatCompletionRequest, organisationID string) (*cloude
 	if systemPrompt != "" {
 		input["system_prompt"] = systemPrompt
 	}
-	if model == capability.Translate {
-		input["text"] = userContent
-		if loc := strings.TrimSpace(req.SourceLocale); loc != "" {
-			input["source_locale"] = loc
+	input[def.InputField] = userContent
+	for name := range def.PromptVariables {
+		value := ""
+		switch name {
+		case "source_locale":
+			value = req.SourceLocale
+		case "target_locale":
+			value = req.TargetLocale
 		}
-		if loc := strings.TrimSpace(req.TargetLocale); loc != "" {
-			input["target_locale"] = loc
+		if value = strings.TrimSpace(value); value != "" {
+			input[name] = value
 		}
-	} else {
-		input["message"] = userContent
+	}
+
+	if err := capability.ValidatePromptVariables(def, input); err != nil {
+		var variableErr *capability.PromptVariableError
+		param := ""
+		if errors.As(err, &variableErr) {
+			param = variableErr.Variable
+		}
+		return nil, newRequestError(http.StatusBadRequest, err.Error(), "invalid_request_error", param, "invalid_prompt_variable")
 	}
 
 	data := map[string]any{
@@ -135,12 +148,12 @@ func completionFromEvent(event *cloudevent.Event) ChatCompletionResponse {
 	}
 }
 
-func modelList() ModelList {
-	known := capability.Known()
+func modelList(registry *capability.Registry) ModelList {
+	known := registry.All()
 	data := make([]ModelCard, 0, len(known))
-	for _, id := range known {
+	for _, def := range known {
 		data = append(data, ModelCard{
-			ID:      id,
+			ID:      def.Name,
 			Object:  ObjectModel,
 			Created: 0,
 			OwnedBy: OwnedBy,

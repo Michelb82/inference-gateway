@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/mywebsite/construction-ai-gateway/internal/capability"
 	"github.com/mywebsite/construction-ai-gateway/internal/cloudevent"
 	"github.com/mywebsite/construction-ai-gateway/internal/queue"
 )
@@ -23,17 +24,17 @@ type Queue interface {
 	Wait(ctx context.Context, requestID string, timeout time.Duration) (*cloudevent.Event, error)
 }
 
-type QueueSource interface {
-	InferenceQueue() Queue
+type RuntimeSource interface {
+	InferenceRuntime() (Queue, *capability.Registry)
 }
 
 type Handler struct {
-	source      QueueSource
+	source      RuntimeSource
 	logger      *slog.Logger
 	waitTimeout time.Duration
 }
 
-func NewHandler(source QueueSource, logger *slog.Logger) *Handler {
+func NewHandler(source RuntimeSource, logger *slog.Logger) *Handler {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -54,12 +55,13 @@ func (h *Handler) handleModels(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed", "invalid_request_error", "", "method_not_allowed")
 		return
 	}
-	if h.queue() == nil {
+	q, registry := h.runtime()
+	if q == nil || registry == nil {
 		writeError(w, http.StatusServiceUnavailable, "gateway is dormant", "server_error", "", "dormant")
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(modelList())
+	_ = json.NewEncoder(w).Encode(modelList(registry))
 }
 
 func (h *Handler) handleCompletions(w http.ResponseWriter, r *http.Request) {
@@ -68,8 +70,8 @@ func (h *Handler) handleCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	q := h.queue()
-	if q == nil {
+	q, registry := h.runtime()
+	if q == nil || registry == nil {
 		writeError(w, http.StatusServiceUnavailable, "gateway is dormant", "server_error", "", "dormant")
 		return
 	}
@@ -86,7 +88,7 @@ func (h *Handler) handleCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	event, reqErr := eventFromRequest(req, r.Header.Get(HeaderOrganisationID))
+	event, reqErr := eventFromRequest(req, r.Header.Get(HeaderOrganisationID), registry)
 	if reqErr != nil {
 		writeRequestError(w, reqErr)
 		return
@@ -143,9 +145,9 @@ func (h *Handler) handleCompletions(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(completionFromEvent(response))
 }
 
-func (h *Handler) queue() Queue {
+func (h *Handler) runtime() (Queue, *capability.Registry) {
 	if h.source == nil {
-		return nil
+		return nil, nil
 	}
-	return h.source.InferenceQueue()
+	return h.source.InferenceRuntime()
 }

@@ -22,7 +22,7 @@ func TestSupportAvailableWhileDormant(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	if body.ContractVersion != ContractVersion || len(body.Capabilities) == 0 || len(body.InferenceVendors) != 2 {
+	if body.ContractVersion != "2" || body.ManifestFormat != "2" || !body.Capabilities.Dynamic || len(body.InferenceVendors) != 2 {
 		t.Fatalf("unexpected support response: %+v", body)
 	}
 }
@@ -67,12 +67,25 @@ func TestSupportAdvertisesRequiredInputLimits(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	for _, capability := range body.Capabilities {
-		if !capability.SystemPromptRequired || !capability.MaxInputCharsRequired || capability.MinInputChars != 200 || capability.MaxInputChars != 500000 {
+	for _, capability := range []capabilitySupport{body.Capabilities} {
+		if !capability.InputFieldRequired || !capability.SystemPromptRequired || !capability.MaxInputCharsRequired || capability.MinInputChars != 200 || capability.MaxInputChars != 500000 {
 			t.Fatalf("unexpected input limit support: %+v", capability)
 		}
 	}
 	if bytes.Contains(rec.Body.Bytes(), []byte("default_max_input_chars")) {
 		t.Fatal("support must not advertise removed defaults")
+	}
+}
+
+func TestSupportAdvertisesStructuredVariableRules(t *testing.T) {
+	rec := httptest.NewRecorder()
+	testMux().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/management/v1/manifest-support", nil))
+	var body supportResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	rules := body.Capabilities.PromptVariableDefinition
+	if len(rules.RequiredFields) != 2 || rules.RequiredFields[0] != "default" || rules.RequiredFields[1] != "allowed" || !rules.AllowedNonempty || !rules.AllowedUnique || !rules.DefaultMustBeAllowed || rules.Matching != "case-sensitive" {
+		t.Fatalf("rules=%+v", rules)
 	}
 }

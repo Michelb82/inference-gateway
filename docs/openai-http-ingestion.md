@@ -11,7 +11,7 @@ Use any OpenAI-compatible Chat Completions client pointed at the gateway base UR
 | Docker Compose (`dev` network) | `http://ai-gateway:80` |
 | Host (published port) | `http://localhost:18080` |
 
-There is no authentication in this version.
+There is no client authentication in this version. For upstream OpenAI-compatible providers, the gateway reads `OPENAI_BEARER_TOKEN` from its environment and adds the provider Authorization header. Clients calling the gateway do not need that provider key.
 
 Until a manifest is applied the gateway is **dormant**. Completions and model listing return an OpenAI-shaped **503**.
 
@@ -19,7 +19,7 @@ Until a manifest is applied the gateway is **dormant**. Completions and model li
 
 `GET /v1/models`
 
-`id` is a **capability**, not an Ollama model name:
+`id` is a capability ID from the active manifest. IDs are sorted; they can be added or removed by a valid manifest update. The distribution sample defines:
 
 - `routing`
 - `intent-classification`
@@ -44,7 +44,7 @@ Example:
 }
 ```
 
-All six capabilities require rank-0 bindings in the manifest. Every ranked binding must declare integer `max_input_chars` from `200` through `500000`; there is no default. Every ranked binding also requires a nonblank `system_prompt`; the rank-0 prompt is used unless an authorized caller override is supplied. See the [manifest configuration](../README.md#manifest-manifestjson) for the complete sample and endpoint reference rules.
+These six names are examples, not mandatory built-ins. A manifest containing only a custom ID such as `appointment-summary` is valid. Every ranked binding requires `input_field` (`message` or `text`), integer `max_input_chars` from `200` through `500000`, and a nonblank `system_prompt`. Optional `prompt_variables` declares locale defaults and allowed lists and optional `output_schema` validates model output. See [manifest configuration](../README.md#manifest-manifestjson) for the contract and migration notes.
 
 Real LLM names appear only on `/health` and `/health.json` (ops).
 
@@ -69,31 +69,36 @@ Real LLM names appear only on `/health` and `/health.json` (ops).
 
 | Field | Required | Meaning |
 |-------|----------|---------|
-| `model` | yes | One of the six capability ids listed above |
+| `model` | yes | An ID configured in the active manifest |
 | `messages` | yes | Chat messages. The **last** `user` content is the capability input. The **first** `system` content is a system-prompt override (default deny). |
 | `stream` | no | Must be omitted or `false`. `true` is rejected (parsers need the full JSON). |
 | `priority` | no | Extra field: `CRITICAL`, `HIGH`, `MEDIUM`, or `LOW` (default `LOW`). Official SDKs: `extra_body`. |
-| `source_locale` | no | Translate extra; default `nl`. |
-| `target_locale` | no | Translate extra; default `en`. |
+| `source_locale` | no | Locale extra, forwarded only when declared in prompt_variables; defaults to the manifest default and must be in its allowed list. |
+| `target_locale` | no | Locale extra, forwarded only when declared in prompt_variables; defaults to the manifest default and must be in its allowed list. |
 
 Header `X-Organisation-Id` is the organisation for system-prompt override policy.
 
 ### Input mapping
 
-| Capability | User content becomes | Other extras |
-|------------|----------------------|--------------|
-| `routing` | `message` | |
-| `intent-classification` | `message` | |
-| `parameter-extraction` | `message` | |
-| `personal-details-extraction` | `message` | |
-| `configure-environment` | `message` | |
-| `translate` | `text` | `source_locale`, `target_locale` |
+The manifest's `input_field` selects whether the last user message becomes internal `message` or `text`. This does not depend on the capability name. Declared `source_locale` and `target_locale` extras are forwarded to prompt rendering; undeclared extras are ignored. One capability supports every pair permitted by its source and target allowed lists. Omitted or blank locale extras use their configured defaults. Matching is case-sensitive after trimming whitespace. Invalid selections return 400 with `error.code` set to `invalid_prompt_variable` and `error.param` set to `source_locale` or `target_locale`; they are rejected before enqueueing. The worker also rechecks selected values after manifest reloads, including for authorized caller prompt overrides. Existing names keep their previous mapping when using the updated distribution sample.
+
+Example using the same capability with English as source and Polish as target (both must be allowed in the manifest):
+
+```json
+{
+  "model": "translate",
+  "messages": [{"role": "user", "content": "Good morning"}],
+  "source_locale": "en",
+  "target_locale": "pl",
+  "priority": "LOW"
+}
+```
 
 ### Success
 
 HTTP **200**. `choices[0].message.content` is a **JSON string** of the capability result. `model` is the capability id (not the Ollama name). `id` is the gateway request id (`chatcmpl-...`).
 
-| Capability | `content` JSON |
+| Example capability in sample | `content` JSON |
 |------------|----------------|
 | `routing` | `{"capability":"<next-capability>"}` |
 | `intent-classification` | `{"intent":"...","confidence":0.0}` |
@@ -117,6 +122,8 @@ HTTP **200**. `choices[0].message.content` is a **JSON string** of the capabilit
   ]
 }
 ```
+
+Output is always a nonempty JSON object. Its fields are governed by the configured output_schema; absent a schema, any nonempty object is accepted. Extra properties are preserved. The shapes above are sample configuration, not hard-coded parsers.
 
 ### Errors
 
@@ -153,6 +160,8 @@ When authorized, the gateway does not use the manifest-configured prompt and doe
 `priority` selects an **internal** Redis lane. The HTTP call is synchronous: the connection waits until the worker publishes a matching response.
 
 Concurrent HTTP requests serialize through a single worker via those lanes (CRITICAL first, then fairness among HIGH/MEDIUM/LOW). The Ollama chat timeout is 120s; the gateway waits up to the same bound.
+
+Requests waiting in Redis use the definition active when worker processing begins. Removing their capability produces a correlated error. Requests already processing keep their captured definition. New requests for removed names return 400 with `unknown_model`.
 
 ## SDK notes
 
