@@ -9,13 +9,13 @@ import (
 
 func testRegistry() *capability.Registry {
 	return capability.NewRegistry(
-		capability.ModelBinding{BaseURL: "http://llm-model:11434", Model: "qwen3:1.7b-q4_K_M", KeepAlive: "5m", MaxInputChars: 200},
-		capability.ModelBinding{BaseURL: "http://llm-model:11434", Model: "qwen3:4b-q4_K_M", KeepAlive: "5m", MaxInputChars: 8000},
-		capability.ModelBinding{BaseURL: "http://llm-model:11434", Model: "qwen3:14b-q4_K_M", KeepAlive: "2m", MaxInputChars: 16000},
+		capability.ModelBinding{SystemPrompt: "Test prompt from {source_locale} to {target_locale}.", BaseURL: "http://llm-model:11434", Model: "qwen3:1.7b-q4_K_M", KeepAlive: "5m", MaxInputChars: 200},
+		capability.ModelBinding{SystemPrompt: "Test prompt from {source_locale} to {target_locale}.", BaseURL: "http://llm-model:11434", Model: "qwen3:4b-q4_K_M", KeepAlive: "5m", MaxInputChars: 8000},
+		capability.ModelBinding{SystemPrompt: "Test prompt from {source_locale} to {target_locale}.", BaseURL: "http://llm-model:11434", Model: "qwen3:14b-q4_K_M", KeepAlive: "2m", MaxInputChars: 16000},
 	)
 }
 
-func TestKnownAndDefaults(t *testing.T) {
+func TestKnownCapabilities(t *testing.T) {
 	known := capability.Known()
 	if len(known) != 6 {
 		t.Fatalf("Known() len = %d", len(known))
@@ -34,15 +34,7 @@ func TestKnownAndDefaults(t *testing.T) {
 		capability.IsKnown("") {
 		t.Fatalf("IsKnown mismatch")
 	}
-	if capability.DefaultMaxInputChars(capability.Routing) != 200 ||
-		capability.DefaultMaxInputChars(capability.IntentClassification) != 8000 ||
-		capability.DefaultMaxInputChars(capability.ParameterExtraction) != 16000 ||
-		capability.DefaultMaxInputChars(capability.PersonalDetails) != 16000 ||
-		capability.DefaultMaxInputChars(capability.Translate) != 16000 ||
-		capability.DefaultMaxInputChars(capability.ConfigureEnvironment) != 16000 ||
-		capability.DefaultMaxInputChars("unknown") != 0 {
-		t.Fatalf("DefaultMaxInputChars mismatch")
-	}
+
 }
 
 func TestRegistryFromBindingsNil(t *testing.T) {
@@ -54,12 +46,12 @@ func TestRegistryFromBindingsNil(t *testing.T) {
 
 func TestRegistryFromBindingsTrimsURL(t *testing.T) {
 	reg, err := capability.NewRegistryFromBindings(map[string]capability.ModelBinding{
-		capability.Routing:              {BaseURL: "http://llm/", Model: "a", KeepAlive: "1m", MaxInputChars: 1},
-		capability.IntentClassification: {BaseURL: "http://llm/", Model: "b", KeepAlive: "1m", MaxInputChars: 2},
-		capability.ParameterExtraction:  {BaseURL: "http://llm/", Model: "c", KeepAlive: "1m", MaxInputChars: 3},
-		capability.PersonalDetails:      {BaseURL: "http://llm/", Model: "c", KeepAlive: "1m", MaxInputChars: 3},
-		capability.Translate:            {BaseURL: "http://llm/", Model: "c", KeepAlive: "1m", MaxInputChars: 3},
-		capability.ConfigureEnvironment: {BaseURL: "http://llm/", Model: "c", KeepAlive: "1m", MaxInputChars: 3},
+		capability.Routing:              {SystemPrompt: "Test prompt from {source_locale} to {target_locale}.", BaseURL: "http://llm/", Model: "a", KeepAlive: "1m", MaxInputChars: 1},
+		capability.IntentClassification: {SystemPrompt: "Test prompt from {source_locale} to {target_locale}.", BaseURL: "http://llm/", Model: "b", KeepAlive: "1m", MaxInputChars: 2},
+		capability.ParameterExtraction:  {SystemPrompt: "Test prompt from {source_locale} to {target_locale}.", BaseURL: "http://llm/", Model: "c", KeepAlive: "1m", MaxInputChars: 3},
+		capability.PersonalDetails:      {SystemPrompt: "Test prompt from {source_locale} to {target_locale}.", BaseURL: "http://llm/", Model: "c", KeepAlive: "1m", MaxInputChars: 3},
+		capability.Translate:            {SystemPrompt: "Test prompt from {source_locale} to {target_locale}.", BaseURL: "http://llm/", Model: "c", KeepAlive: "1m", MaxInputChars: 3},
+		capability.ConfigureEnvironment: {SystemPrompt: "Test prompt from {source_locale} to {target_locale}.", BaseURL: "http://llm/", Model: "c", KeepAlive: "1m", MaxInputChars: 3},
 	})
 	if err != nil {
 		t.Fatalf("NewRegistryFromBindings() error = %v", err)
@@ -75,12 +67,12 @@ func TestRegistryFromBindingsTrimsURL(t *testing.T) {
 
 func TestRegistryGetRequiresURLAndModel(t *testing.T) {
 	reg, err := capability.NewRegistryFromBindings(map[string]capability.ModelBinding{
-		capability.Routing:              {BaseURL: "", Model: "a", KeepAlive: "1m"},
-		capability.IntentClassification: {BaseURL: "http://llm", Model: "", KeepAlive: "1m"},
-		capability.ParameterExtraction:  {BaseURL: "http://llm", Model: "c", KeepAlive: "1m"},
-		capability.PersonalDetails:      {BaseURL: "http://llm", Model: "c", KeepAlive: "1m"},
-		capability.Translate:            {BaseURL: "http://llm", Model: "c", KeepAlive: "1m"},
-		capability.ConfigureEnvironment: {BaseURL: "http://llm", Model: "c", KeepAlive: "1m"},
+		capability.Routing:              {SystemPrompt: "Test prompt from {source_locale} to {target_locale}.", BaseURL: "", Model: "a", KeepAlive: "1m"},
+		capability.IntentClassification: {SystemPrompt: "Test prompt from {source_locale} to {target_locale}.", BaseURL: "http://llm", Model: "", KeepAlive: "1m"},
+		capability.ParameterExtraction:  {SystemPrompt: "Test prompt from {source_locale} to {target_locale}.", BaseURL: "http://llm", Model: "c", KeepAlive: "1m"},
+		capability.PersonalDetails:      {SystemPrompt: "Test prompt from {source_locale} to {target_locale}.", BaseURL: "http://llm", Model: "c", KeepAlive: "1m"},
+		capability.Translate:            {SystemPrompt: "Test prompt from {source_locale} to {target_locale}.", BaseURL: "http://llm", Model: "c", KeepAlive: "1m"},
+		capability.ConfigureEnvironment: {SystemPrompt: "Test prompt from {source_locale} to {target_locale}.", BaseURL: "http://llm", Model: "c", KeepAlive: "1m"},
 	})
 	if err != nil {
 		t.Fatalf("NewRegistryFromBindings() error = %v", err)
@@ -95,12 +87,12 @@ func TestRegistryGetRequiresURLAndModel(t *testing.T) {
 
 func TestRegistryGetAllowsEmptyOpenAIModel(t *testing.T) {
 	reg, err := capability.NewRegistryFromBindings(map[string]capability.ModelBinding{
-		capability.Routing:              {Vendor: "openai", BaseURL: "https://someurl", Model: "", KeepAlive: "1m", MaxInputChars: 1},
-		capability.IntentClassification: {Vendor: "openai", BaseURL: "https://someurl", Model: "", KeepAlive: "1m", MaxInputChars: 2},
-		capability.ParameterExtraction:  {Vendor: "openai", BaseURL: "https://someurl", Model: "", KeepAlive: "1m", MaxInputChars: 3},
-		capability.PersonalDetails:      {Vendor: "openai", BaseURL: "https://someurl", Model: "", KeepAlive: "1m", MaxInputChars: 3},
-		capability.Translate:            {Vendor: "openai", BaseURL: "https://someurl", Model: "", KeepAlive: "1m", MaxInputChars: 3},
-		capability.ConfigureEnvironment: {Vendor: "openai", BaseURL: "https://someurl", Model: "", KeepAlive: "1m", MaxInputChars: 3},
+		capability.Routing:              {SystemPrompt: "Test prompt from {source_locale} to {target_locale}.", Vendor: "openai", BaseURL: "https://someurl", Model: "", KeepAlive: "1m", MaxInputChars: 1},
+		capability.IntentClassification: {SystemPrompt: "Test prompt from {source_locale} to {target_locale}.", Vendor: "openai", BaseURL: "https://someurl", Model: "", KeepAlive: "1m", MaxInputChars: 2},
+		capability.ParameterExtraction:  {SystemPrompt: "Test prompt from {source_locale} to {target_locale}.", Vendor: "openai", BaseURL: "https://someurl", Model: "", KeepAlive: "1m", MaxInputChars: 3},
+		capability.PersonalDetails:      {SystemPrompt: "Test prompt from {source_locale} to {target_locale}.", Vendor: "openai", BaseURL: "https://someurl", Model: "", KeepAlive: "1m", MaxInputChars: 3},
+		capability.Translate:            {SystemPrompt: "Test prompt from {source_locale} to {target_locale}.", Vendor: "openai", BaseURL: "https://someurl", Model: "", KeepAlive: "1m", MaxInputChars: 3},
+		capability.ConfigureEnvironment: {SystemPrompt: "Test prompt from {source_locale} to {target_locale}.", Vendor: "openai", BaseURL: "https://someurl", Model: "", KeepAlive: "1m", MaxInputChars: 3},
 	})
 	if err != nil {
 		t.Fatalf("NewRegistryFromBindings() error = %v", err)
@@ -240,7 +232,7 @@ func TestRegistryGet(t *testing.T) {
 
 func TestRegistryFromBindingsRequiresKnownCapabilities(t *testing.T) {
 	_, err := capability.NewRegistryFromBindings(map[string]capability.ModelBinding{
-		capability.Routing: {BaseURL: "http://llm", Model: "a", KeepAlive: "1m"},
+		capability.Routing: {SystemPrompt: "Test prompt from {source_locale} to {target_locale}.", BaseURL: "http://llm", Model: "a", KeepAlive: "1m"},
 	})
 	if err == nil {
 		t.Fatalf("expected error for incomplete bindings")
@@ -249,9 +241,9 @@ func TestRegistryFromBindingsRequiresKnownCapabilities(t *testing.T) {
 
 func TestRegistryUnknownCapability(t *testing.T) {
 	reg := capability.NewRegistry(
-		capability.ModelBinding{BaseURL: "http://llm-model:11434", Model: "a", KeepAlive: "1m"},
-		capability.ModelBinding{BaseURL: "http://llm-model:11434", Model: "b", KeepAlive: "1m"},
-		capability.ModelBinding{BaseURL: "http://llm-model:11434", Model: "c", KeepAlive: "1m"},
+		capability.ModelBinding{SystemPrompt: "Test prompt from {source_locale} to {target_locale}.", BaseURL: "http://llm-model:11434", Model: "a", KeepAlive: "1m"},
+		capability.ModelBinding{SystemPrompt: "Test prompt from {source_locale} to {target_locale}.", BaseURL: "http://llm-model:11434", Model: "b", KeepAlive: "1m"},
+		capability.ModelBinding{SystemPrompt: "Test prompt from {source_locale} to {target_locale}.", BaseURL: "http://llm-model:11434", Model: "c", KeepAlive: "1m"},
 	)
 	_, err := reg.Get("unknown")
 	if err == nil {
@@ -357,7 +349,7 @@ func TestBuildPromptsRoutingUsesBuiltInPrompt(t *testing.T) {
 		t.Fatalf("userPrompt = %q", userPrompt)
 	}
 	if systemPrompt == "" || strings.Contains(systemPrompt, "route me") {
-		t.Fatalf("expected built-in system prompt, got %q", systemPrompt)
+		t.Fatalf("expected configured system prompt, got %q", systemPrompt)
 	}
 }
 
@@ -558,5 +550,44 @@ func TestPromptBoundsErrorToMap(t *testing.T) {
 	}
 	if m["max_characters"] != "200" {
 		t.Fatalf("max_characters = %v", m["max_characters"])
+	}
+}
+
+func TestRegistryUsesConfiguredPromptAndRejectsMissingPrompt(t *testing.T) {
+	bindings := make(map[string]capability.ModelBinding)
+	for _, name := range capability.Known() {
+		bindings[name] = capability.ModelBinding{BaseURL: "http://llm", Model: "test", SystemPrompt: "Configured " + name}
+	}
+	reg, err := capability.NewRegistryFromBindings(bindings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range capability.Known() {
+		def, err := reg.Get(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		prompt, _, err := capability.BuildPrompts(def, map[string]any{"message": "hello", "text": "hello"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if prompt != "Configured "+name {
+			t.Fatalf("%s prompt = %q", name, prompt)
+		}
+	}
+	bindings[capability.Routing] = capability.ModelBinding{}
+	if _, err := capability.NewRegistryFromBindings(bindings); err == nil {
+		t.Fatal("accepted missing prompt")
+	}
+}
+
+func TestTranslatePromptPreservesLiteralPercentSigns(t *testing.T) {
+	def := capability.Definition{Name: capability.Translate, SystemPrompt: "Translate {source_locale} to {target_locale}, 100% accurately."}
+	prompt, _, err := capability.BuildPrompts(def, map[string]any{"text": "Hallo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prompt != "Translate Dutch to English, 100% accurately." {
+		t.Fatalf("prompt = %q", prompt)
 	}
 }

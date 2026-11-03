@@ -24,25 +24,25 @@ func validManifest() configmgmt.Manifest {
 		},
 		CapabilityModels: map[string][]configmgmt.RankedModelRef{
 			"routing": {
-				{Rank: 0, Model: "qwen3:1.7b"},
-				{Rank: 1, Model: "qwen3:4b"},
+				{Rank: 0, Model: "qwen3:1.7b", MaxInputChars: 200, SystemPrompt: "Test manifest prompt."},
+				{Rank: 1, Model: "qwen3:4b", MaxInputChars: 8000, SystemPrompt: "Test manifest prompt."},
 			},
 			"intent-classification": {
-				{Rank: 0, Model: "qwen3:4b"},
-				{Rank: 1, Model: "qwen3:14b"},
+				{Rank: 0, Model: "qwen3:4b", MaxInputChars: 8000, SystemPrompt: "Test manifest prompt."},
+				{Rank: 1, Model: "qwen3:14b", MaxInputChars: 16000, SystemPrompt: "Test manifest prompt."},
 			},
 			"parameter-extraction": {
-				{Rank: 0, Model: "qwen3:14b"},
+				{Rank: 0, Model: "qwen3:14b", MaxInputChars: 16000, SystemPrompt: "Test manifest prompt."},
 			},
 			"personal-details-extraction": {
-				{Rank: 0, Model: "qwen3:14b"},
+				{Rank: 0, Model: "qwen3:14b", MaxInputChars: 16000, SystemPrompt: "Test manifest prompt."},
 			},
 			"translate": {
-				{Rank: 0, Model: "qwen3:14b"},
-				{Rank: 1, Model: "qwen3:4b"},
+				{Rank: 0, Model: "qwen3:14b", MaxInputChars: 16000, SystemPrompt: "Test manifest prompt."},
+				{Rank: 1, Model: "qwen3:4b", MaxInputChars: 8000, SystemPrompt: "Test manifest prompt."},
 			},
 			"configure-environment": {
-				{Rank: 0, Model: "qwen3:14b"},
+				{Rank: 0, Model: "qwen3:14b", MaxInputChars: 16000, SystemPrompt: "Test manifest prompt."},
 			},
 		},
 		Ingress: configmgmt.Ingress{
@@ -196,8 +196,8 @@ func TestValidateAndResolve(t *testing.T) {
 func TestResolveUsesRankZeroOnly(t *testing.T) {
 	m := validManifest()
 	m.CapabilityModels["routing"] = []configmgmt.RankedModelRef{
-		{Rank: 1, Model: "qwen3:4b"},
-		{Rank: 0, Model: "qwen3:1.7b"},
+		{Rank: 1, Model: "qwen3:4b", MaxInputChars: 16000, SystemPrompt: "Test manifest prompt."},
+		{Rank: 0, Model: "qwen3:1.7b", MaxInputChars: 16000, SystemPrompt: "Test manifest prompt."},
 	}
 	snap, err := configmgmt.Resolve(m)
 	if err != nil {
@@ -218,7 +218,7 @@ func TestResolveOpenAIVendor(t *testing.T) {
 		KeepAliveSeconds: 0,
 	})
 	m.CapabilityModels["routing"] = []configmgmt.RankedModelRef{
-		{Rank: 0, Model: "gpt-4o-mini"},
+		{Rank: 0, Model: "gpt-4o-mini", MaxInputChars: 16000, SystemPrompt: "Test manifest prompt."},
 	}
 	if err := configmgmt.Validate(m); err != nil {
 		t.Fatalf("Validate() error = %v", err)
@@ -252,7 +252,7 @@ func TestResolveOpenAINullModel(t *testing.T) {
 		KeepAliveSeconds: 300,
 	})
 	m.CapabilityModels["routing"] = []configmgmt.RankedModelRef{
-		{Rank: 0, Model: "openai"},
+		{Rank: 0, Model: "openai", MaxInputChars: 16000, SystemPrompt: "Test manifest prompt."},
 	}
 	if err := configmgmt.Validate(m); err != nil {
 		t.Fatalf("Validate() error = %v", err)
@@ -276,40 +276,33 @@ func TestResolveOpenAINullModel(t *testing.T) {
 	}
 }
 
-func TestResolveUsesCapabilityDefaultMaxInputChars(t *testing.T) {
+func TestResolveRejectsMissingMaxInputChars(t *testing.T) {
 	m := validManifest()
-	// Omitting max_input_chars (and zero) must use capability.DefaultMaxInputChars.
-	m.CapabilityModels["routing"] = []configmgmt.RankedModelRef{{Rank: 0, Model: "qwen3:1.7b"}}
-	m.CapabilityModels["intent-classification"] = []configmgmt.RankedModelRef{{Rank: 0, Model: "qwen3:4b", MaxInputChars: 0}}
-	snap, err := configmgmt.Resolve(m)
-	if err != nil {
-		t.Fatalf("Resolve() error = %v", err)
-	}
-	if snap.Bindings["routing"].MaxInputChars != 200 {
-		t.Fatalf("routing max = %d, want capability default 200", snap.Bindings["routing"].MaxInputChars)
-	}
-	if snap.Bindings["intent-classification"].MaxInputChars != 8000 {
-		t.Fatalf("intent max = %d, want capability default 8000", snap.Bindings["intent-classification"].MaxInputChars)
+	m.CapabilityModels["routing"][0].MaxInputChars = 0
+	_, err := configmgmt.Resolve(m)
+	want := "capability routing has not defined max_input_chars please see documentation"
+	if err == nil || err.Error() != want {
+		t.Fatalf("Resolve() error = %v, want %q", err, want)
 	}
 }
 
 func TestResolveHonorsExplicitMaxInputChars(t *testing.T) {
 	m := validManifest()
 	m.CapabilityModels["translate"] = []configmgmt.RankedModelRef{
-		{Rank: 0, Model: "qwen3:14b", MaxInputChars: 42},
+		{Rank: 0, Model: "qwen3:14b", MaxInputChars: 420, SystemPrompt: "Test manifest prompt."},
 	}
 	snap, err := configmgmt.Resolve(m)
 	if err != nil {
 		t.Fatalf("Resolve() error = %v", err)
 	}
-	if snap.Bindings["translate"].MaxInputChars != 42 {
-		t.Fatalf("translate max = %d, want 42", snap.Bindings["translate"].MaxInputChars)
+	if snap.Bindings["translate"].MaxInputChars != 420 {
+		t.Fatalf("translate max = %d, want 420", snap.Bindings["translate"].MaxInputChars)
 	}
 }
 
 func TestResolveErrorsWithoutRankZero(t *testing.T) {
 	m := validManifest()
-	m.CapabilityModels["routing"] = []configmgmt.RankedModelRef{{Rank: 1, Model: "qwen3:1.7b"}}
+	m.CapabilityModels["routing"] = []configmgmt.RankedModelRef{{Rank: 1, Model: "qwen3:1.7b", MaxInputChars: 16000, SystemPrompt: "Test manifest prompt."}}
 	_, err := configmgmt.Resolve(m)
 	if err == nil || !strings.Contains(err.Error(), "rank 0") {
 		t.Fatalf("error = %v, want rank 0", err)
@@ -318,7 +311,7 @@ func TestResolveErrorsWithoutRankZero(t *testing.T) {
 
 func TestResolveErrorsUnknownModel(t *testing.T) {
 	m := validManifest()
-	m.CapabilityModels["routing"] = []configmgmt.RankedModelRef{{Rank: 0, Model: "missing"}}
+	m.CapabilityModels["routing"] = []configmgmt.RankedModelRef{{Rank: 0, Model: "missing", MaxInputChars: 16000, SystemPrompt: "Test manifest prompt."}}
 	_, err := configmgmt.Resolve(m)
 	if err == nil || !strings.Contains(err.Error(), "unknown model") {
 		t.Fatalf("error = %v, want unknown model", err)
@@ -359,7 +352,7 @@ func TestFingerprintChangesWhenBindingChanges(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve() error = %v", err)
 	}
-	m.CapabilityModels["routing"] = []configmgmt.RankedModelRef{{Rank: 0, Model: "qwen3:4b"}}
+	m.CapabilityModels["routing"] = []configmgmt.RankedModelRef{{Rank: 0, Model: "qwen3:4b", MaxInputChars: 16000, SystemPrompt: "Test manifest prompt."}}
 	b, err := configmgmt.Resolve(m)
 	if err != nil {
 		t.Fatalf("Resolve() error = %v", err)
@@ -459,14 +452,14 @@ func TestValidateErrors(t *testing.T) {
 		{
 			name: "unknown capability_models key",
 			mutate: func(m *configmgmt.Manifest) {
-				m.CapabilityModels["summarize"] = []configmgmt.RankedModelRef{{Rank: 0, Model: "qwen3:1.7b"}}
+				m.CapabilityModels["summarize"] = []configmgmt.RankedModelRef{{Rank: 0, Model: "qwen3:1.7b", MaxInputChars: 16000, SystemPrompt: "Test manifest prompt."}}
 			},
 			substr: "unknown capability",
 		},
 		{
 			name: "padded capability_models key",
 			mutate: func(m *configmgmt.Manifest) {
-				m.CapabilityModels[" routing "] = []configmgmt.RankedModelRef{{Rank: 0, Model: "qwen3:1.7b"}}
+				m.CapabilityModels[" routing "] = []configmgmt.RankedModelRef{{Rank: 0, Model: "qwen3:1.7b", MaxInputChars: 16000, SystemPrompt: "Test manifest prompt."}}
 			},
 			substr: "unknown capability",
 		},
@@ -487,7 +480,7 @@ func TestValidateErrors(t *testing.T) {
 		{
 			name: "blank capability model ref",
 			mutate: func(m *configmgmt.Manifest) {
-				m.CapabilityModels["routing"] = []configmgmt.RankedModelRef{{Rank: 0, Model: "  "}}
+				m.CapabilityModels["routing"] = []configmgmt.RankedModelRef{{Rank: 0, Model: "  ", MaxInputChars: 16000, SystemPrompt: "Test manifest prompt."}}
 			},
 			substr: "model must not be blank",
 		},
@@ -495,7 +488,7 @@ func TestValidateErrors(t *testing.T) {
 			name: "negative max_input_chars",
 			mutate: func(m *configmgmt.Manifest) {
 				m.CapabilityModels["routing"] = []configmgmt.RankedModelRef{
-					{Rank: 0, Model: "qwen3:1.7b", MaxInputChars: -1},
+					{Rank: 0, Model: "qwen3:1.7b", MaxInputChars: -1, SystemPrompt: "Test manifest prompt."},
 				}
 			},
 			substr: "max_input_chars",
@@ -573,7 +566,7 @@ func TestValidateErrors(t *testing.T) {
 		{
 			name: "missing rank 0",
 			mutate: func(m *configmgmt.Manifest) {
-				m.CapabilityModels["routing"] = []configmgmt.RankedModelRef{{Rank: 1, Model: "qwen3:1.7b"}}
+				m.CapabilityModels["routing"] = []configmgmt.RankedModelRef{{Rank: 1, Model: "qwen3:1.7b", MaxInputChars: 16000, SystemPrompt: "Test manifest prompt."}}
 			},
 			substr: "rank 0",
 		},
@@ -581,8 +574,8 @@ func TestValidateErrors(t *testing.T) {
 			name: "duplicate rank",
 			mutate: func(m *configmgmt.Manifest) {
 				m.CapabilityModels["routing"] = []configmgmt.RankedModelRef{
-					{Rank: 0, Model: "qwen3:1.7b"},
-					{Rank: 0, Model: "qwen3:4b"},
+					{Rank: 0, Model: "qwen3:1.7b", MaxInputChars: 16000, SystemPrompt: "Test manifest prompt."},
+					{Rank: 0, Model: "qwen3:4b", MaxInputChars: 16000, SystemPrompt: "Test manifest prompt."},
 				}
 			},
 			substr: "duplicates rank",
@@ -590,7 +583,7 @@ func TestValidateErrors(t *testing.T) {
 		{
 			name: "unknown model reference",
 			mutate: func(m *configmgmt.Manifest) {
-				m.CapabilityModels["routing"] = []configmgmt.RankedModelRef{{Rank: 0, Model: "missing"}}
+				m.CapabilityModels["routing"] = []configmgmt.RankedModelRef{{Rank: 0, Model: "missing", MaxInputChars: 16000, SystemPrompt: "Test manifest prompt."}}
 			},
 			substr: "unknown model",
 		},

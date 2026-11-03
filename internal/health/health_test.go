@@ -34,9 +34,9 @@ func probeKey(url string) string {
 
 func testRegistry() *capability.Registry {
 	return capability.NewRegistry(
-		capability.ModelBinding{Vendor: "ollama", BaseURL: "http://llm-model:11434", Model: "qwen3:1.7b-q4_K_M", KeepAlive: "5m"},
-		capability.ModelBinding{Vendor: "ollama", BaseURL: "http://llm-model:11434", Model: "qwen3:4b-q4_K_M", KeepAlive: "5m"},
-		capability.ModelBinding{Vendor: "ollama", BaseURL: "http://llm-model:11434", Model: "qwen3:14b-q4_K_M", KeepAlive: "2m"},
+		capability.ModelBinding{SystemPrompt: "Test prompt from {source_locale} to {target_locale}.", Vendor: "ollama", BaseURL: "http://llm-model:11434", Model: "qwen3:1.7b-q4_K_M", KeepAlive: "5m"},
+		capability.ModelBinding{SystemPrompt: "Test prompt from {source_locale} to {target_locale}.", Vendor: "ollama", BaseURL: "http://llm-model:11434", Model: "qwen3:4b-q4_K_M", KeepAlive: "5m"},
+		capability.ModelBinding{SystemPrompt: "Test prompt from {source_locale} to {target_locale}.", Vendor: "ollama", BaseURL: "http://llm-model:11434", Model: "qwen3:14b-q4_K_M", KeepAlive: "2m"},
 	)
 }
 
@@ -227,12 +227,12 @@ func TestHealthMethodNotAllowed(t *testing.T) {
 }
 
 func openaiCapRegistry(url, model string) *capability.Registry {
-	b := capability.ModelBinding{Vendor: "openai", BaseURL: url, Model: model, MaxInputChars: 8000}
+	b := capability.ModelBinding{SystemPrompt: "Test prompt from {source_locale} to {target_locale}.", Vendor: "openai", BaseURL: url, Model: model, MaxInputChars: 8000}
 	return capability.NewRegistry(b, b, b)
 }
 
 func ollamaCapRegistry(url, model string) *capability.Registry {
-	b := capability.ModelBinding{Vendor: "ollama", BaseURL: url, Model: model, KeepAlive: "5m", MaxInputChars: 8000}
+	b := capability.ModelBinding{SystemPrompt: "Test prompt from {source_locale} to {target_locale}.", Vendor: "ollama", BaseURL: url, Model: model, KeepAlive: "5m", MaxInputChars: 8000}
 	return capability.NewRegistry(b, b, b)
 }
 

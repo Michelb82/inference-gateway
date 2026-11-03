@@ -36,12 +36,11 @@ func Resolve(m Manifest) (Snapshot, error) {
 		if !ok {
 			return Snapshot{}, fmt.Errorf("capability %s references unknown model %q", capName, primary.Model)
 		}
-		maxChars := primary.MaxInputChars
-		if maxChars <= 0 {
-			maxChars = capability.DefaultMaxInputChars(capName)
+		if err := validateMaxInputChars(capName, primary.MaxInputChars); err != nil {
+			return Snapshot{}, err
 		}
-		if maxChars <= 0 {
-			return Snapshot{}, fmt.Errorf("capability %s has no max_input_chars default", capName)
+		if strings.TrimSpace(primary.SystemPrompt) == "" {
+			return Snapshot{}, fmt.Errorf("capability %s has not defined system_prompt please see documentation", capName)
 		}
 		vendor, err := inference.ParseVendor(endpoint.Vendor)
 		if err != nil {
@@ -56,7 +55,8 @@ func Resolve(m Manifest) (Snapshot, error) {
 			BaseURL:       strings.TrimRight(strings.TrimSpace(endpoint.URL), "/"),
 			Model:         strings.TrimSpace(endpoint.Model),
 			KeepAlive:     keepAlive,
-			MaxInputChars: maxChars,
+			MaxInputChars: primary.MaxInputChars,
+			SystemPrompt:  strings.TrimSpace(primary.SystemPrompt),
 		}
 	}
 	tools := make(map[string]Tool, len(m.Tools))
@@ -121,7 +121,7 @@ func fingerprint(s Snapshot) string {
 	sort.Strings(keys)
 	for _, k := range keys {
 		b := s.Bindings[k]
-		parts = append(parts, k, b.Vendor, b.BaseURL, b.Model, b.KeepAlive, fmt.Sprintf("%d", b.MaxInputChars))
+		parts = append(parts, k, b.Vendor, b.BaseURL, b.Model, b.KeepAlive, fmt.Sprintf("%d", b.MaxInputChars), b.SystemPrompt)
 	}
 	toolNames := make([]string, 0, len(s.Tools))
 	for name := range s.Tools {

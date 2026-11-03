@@ -31,35 +31,130 @@
   ],
   "capability_models": {
     "routing": [
-      {"rank": 0, "model": "qwen3:1.7b", "max_input_chars": 200},
-      {"rank": 1, "model": "qwen3:4b"},
-      {"rank": 2, "model": "openai"}
+      {
+        "rank": 0,
+        "model": "qwen3:1.7b",
+        "max_input_chars": 200,
+        "system_prompt": "You are a routing model for a construction platform AI gateway.\nGiven a user message, choose the single best next AI capability.\nRespond with ONLY valid JSON in this exact shape:\n{\"capability\":\"<capability-name>\"}\nAllowed capability values: intent-classification, translate.\nDo not include markdown, explanation, or extra fields."
+      },
+      {
+        "rank": 1,
+        "model": "qwen3:4b",
+        "max_input_chars": 200,
+        "system_prompt": "You are a routing model for a construction platform AI gateway.\nGiven a user message, choose the single best next AI capability.\nRespond with ONLY valid JSON in this exact shape:\n{\"capability\":\"<capability-name>\"}\nAllowed capability values: intent-classification, translate.\nDo not include markdown, explanation, or extra fields."
+      },
+      {
+        "rank": 2,
+        "model": "openai",
+        "max_input_chars": 200,
+        "system_prompt": "You are a routing model for a construction platform AI gateway.\nGiven a user message, choose the single best next AI capability.\nRespond with ONLY valid JSON in this exact shape:\n{\"capability\":\"<capability-name>\"}\nAllowed capability values: intent-classification, translate.\nDo not include markdown, explanation, or extra fields."
+      }
     ],
     "intent-classification": [
-      {"rank": 0, "model": "qwen3:4b", "max_input_chars": 8000},
-      {"rank": 1, "model": "qwen3:14b"},
-      {"rank": 2, "model": "qwen3:1.7b"},
-      {"rank": 3, "model": "openai"}
+      {
+        "rank": 0,
+        "model": "qwen3:4b",
+        "max_input_chars": 8000,
+        "system_prompt": "You are an intent classification model for a construction services platform.\nGiven a user message, determine the user's intent and a confidence score between 0 and 1.\nRespond with ONLY valid JSON in this exact shape:\n{\"intent\":\"<intent-slug>\",\"confidence\":0.0}\nUse lowercase kebab-case for intent (for example wall-painting, bathroom-renovation).\nDo not include markdown, explanation, or extra fields."
+      },
+      {
+        "rank": 1,
+        "model": "qwen3:14b",
+        "max_input_chars": 8000,
+        "system_prompt": "You are an intent classification model for a construction services platform.\nGiven a user message, determine the user's intent and a confidence score between 0 and 1.\nRespond with ONLY valid JSON in this exact shape:\n{\"intent\":\"<intent-slug>\",\"confidence\":0.0}\nUse lowercase kebab-case for intent (for example wall-painting, bathroom-renovation).\nDo not include markdown, explanation, or extra fields."
+      },
+      {
+        "rank": 2,
+        "model": "qwen3:1.7b",
+        "max_input_chars": 8000,
+        "system_prompt": "You are an intent classification model for a construction services platform.\nGiven a user message, determine the user's intent and a confidence score between 0 and 1.\nRespond with ONLY valid JSON in this exact shape:\n{\"intent\":\"<intent-slug>\",\"confidence\":0.0}\nUse lowercase kebab-case for intent (for example wall-painting, bathroom-renovation).\nDo not include markdown, explanation, or extra fields."
+      },
+      {
+        "rank": 3,
+        "model": "openai",
+        "max_input_chars": 8000,
+        "system_prompt": "You are an intent classification model for a construction services platform.\nGiven a user message, determine the user's intent and a confidence score between 0 and 1.\nRespond with ONLY valid JSON in this exact shape:\n{\"intent\":\"<intent-slug>\",\"confidence\":0.0}\nUse lowercase kebab-case for intent (for example wall-painting, bathroom-renovation).\nDo not include markdown, explanation, or extra fields."
+      }
     ],
     "parameter-extraction": [
-      {"rank": 0, "model": "qwen3:14b", "max_input_chars": 16000},
-      {"rank": 1, "model": "qwen3:4b"},
-      {"rank": 2, "model": "openai"}
+      {
+        "rank": 0,
+        "model": "qwen3:14b",
+        "max_input_chars": 16000,
+        "system_prompt": "You are an AI assistant for a construction services platform.\nFollow the user request and respond with ONLY one valid JSON object.\nDo not include markdown or explanation."
+      },
+      {
+        "rank": 1,
+        "model": "qwen3:4b",
+        "max_input_chars": 200,
+        "system_prompt": "You are an AI assistant for a construction services platform.\nFollow the user request and respond with ONLY one valid JSON object.\nDo not include markdown or explanation."
+      },
+      {
+        "rank": 2,
+        "model": "openai",
+        "max_input_chars": 200,
+        "system_prompt": "You are an AI assistant for a construction services platform.\nFollow the user request and respond with ONLY one valid JSON object.\nDo not include markdown or explanation."
+      }
     ],
     "personal-details-extraction": [
-      {"rank": 0, "model": "qwen3:14b", "max_input_chars": 16000},
-      {"rank": 1, "model": "qwen3:4b"},
-      {"rank": 2, "model": "openai"}
+      {
+        "rank": 0,
+        "model": "qwen3:14b",
+        "max_input_chars": 16000,
+        "system_prompt": "You are an AI assistant for a construction services platform.\nFollow the user request and respond with ONLY one valid JSON object.\nDo not include markdown or explanation."
+      },
+      {
+        "rank": 1,
+        "model": "qwen3:4b",
+        "max_input_chars": 200,
+        "system_prompt": "You are an AI assistant for a construction services platform.\nFollow the user request and respond with ONLY one valid JSON object.\nDo not include markdown or explanation."
+      },
+      {
+        "rank": 2,
+        "model": "openai",
+        "max_input_chars": 200,
+        "system_prompt": "You are an AI assistant for a construction services platform.\nFollow the user request and respond with ONLY one valid JSON object.\nDo not include markdown or explanation."
+      }
     ],
     "translate": [
-      {"rank": 0, "model": "qwen3:14b", "max_input_chars": 16000},
-      {"rank": 1, "model": "qwen3:4b"},
-      {"rank": 2, "model": "openai"}
+      {
+        "rank": 0,
+        "model": "qwen3:14b",
+        "max_input_chars": 16000,
+        "system_prompt": "You are a professional translator for a construction services website. Translate the following service description from {source_locale} to {target_locale}.\nRespond with ONLY valid JSON in this exact shape:\n{\"text\":\"<translated text>\"}\nReturn the translated text with no quotes inside the value beyond normal punctuation, and no markdown or explanation."
+      },
+      {
+        "rank": 1,
+        "model": "qwen3:4b",
+        "max_input_chars": 200,
+        "system_prompt": "You are a professional translator for a construction services website. Translate the following service description from {source_locale} to {target_locale}.\nRespond with ONLY valid JSON in this exact shape:\n{\"text\":\"<translated text>\"}\nReturn the translated text with no quotes inside the value beyond normal punctuation, and no markdown or explanation."
+      },
+      {
+        "rank": 2,
+        "model": "openai",
+        "max_input_chars": 200,
+        "system_prompt": "You are a professional translator for a construction services website. Translate the following service description from {source_locale} to {target_locale}.\nRespond with ONLY valid JSON in this exact shape:\n{\"text\":\"<translated text>\"}\nReturn the translated text with no quotes inside the value beyond normal punctuation, and no markdown or explanation."
+      }
     ],
     "configure-environment": [
-      {"rank": 0, "model": "qwen3:14b", "max_input_chars": 16000},
-      {"rank": 1, "model": "qwen3:4b"},
-      {"rank": 2, "model": "openai"}
+      {
+        "rank": 0,
+        "model": "qwen3:14b",
+        "max_input_chars": 16000,
+        "system_prompt": "You are an AI assistant for a construction services platform.\nFollow the user request and respond with ONLY one valid JSON object.\nDo not include markdown or explanation."
+      },
+      {
+        "rank": 1,
+        "model": "qwen3:4b",
+        "max_input_chars": 200,
+        "system_prompt": "You are an AI assistant for a construction services platform.\nFollow the user request and respond with ONLY one valid JSON object.\nDo not include markdown or explanation."
+      },
+      {
+        "rank": 2,
+        "model": "openai",
+        "max_input_chars": 200,
+        "system_prompt": "You are an AI assistant for a construction services platform.\nFollow the user request and respond with ONLY one valid JSON object.\nDo not include markdown or explanation."
+      }
     ]
   },
   "tools": [],

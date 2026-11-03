@@ -23,7 +23,10 @@ Until a manifest is applied the gateway is **dormant**. Completions and model li
 
 - `routing`
 - `intent-classification`
+- `parameter-extraction`
+- `personal-details-extraction`
 - `translate`
+- `configure-environment`
 
 Example:
 
@@ -33,10 +36,15 @@ Example:
   "data": [
     {"id": "routing", "object": "model", "created": 0, "owned_by": "inference-gateway"},
     {"id": "intent-classification", "object": "model", "created": 0, "owned_by": "inference-gateway"},
-    {"id": "translate", "object": "model", "created": 0, "owned_by": "inference-gateway"}
+    {"id": "parameter-extraction", "object": "model", "created": 0, "owned_by": "inference-gateway"},
+    {"id": "personal-details-extraction", "object": "model", "created": 0, "owned_by": "inference-gateway"},
+    {"id": "translate", "object": "model", "created": 0, "owned_by": "inference-gateway"},
+    {"id": "configure-environment", "object": "model", "created": 0, "owned_by": "inference-gateway"}
   ]
 }
 ```
+
+All six capabilities require rank-0 bindings in the manifest. Every ranked binding must declare integer `max_input_chars` from `200` through `500000`; there is no default. Every ranked binding also requires a nonblank `system_prompt`; the rank-0 prompt is used unless an authorized caller override is supplied. See the [manifest configuration](../README.md#manifest-manifestjson) for the complete sample and endpoint reference rules.
 
 Real LLM names appear only on `/health` and `/health.json` (ops).
 
@@ -61,7 +69,7 @@ Real LLM names appear only on `/health` and `/health.json` (ops).
 
 | Field | Required | Meaning |
 |-------|----------|---------|
-| `model` | yes | Capability id (`routing`, `intent-classification`, `translate`) |
+| `model` | yes | One of the six capability ids listed above |
 | `messages` | yes | Chat messages. The **last** `user` content is the capability input. The **first** `system` content is a system-prompt override (default deny). |
 | `stream` | no | Must be omitted or `false`. `true` is rejected (parsers need the full JSON). |
 | `priority` | no | Extra field: `CRITICAL`, `HIGH`, `MEDIUM`, or `LOW` (default `LOW`). Official SDKs: `extra_body`. |
@@ -76,6 +84,9 @@ Header `X-Organisation-Id` is the organisation for system-prompt override policy
 |------------|----------------------|--------------|
 | `routing` | `message` | |
 | `intent-classification` | `message` | |
+| `parameter-extraction` | `message` | |
+| `personal-details-extraction` | `message` | |
+| `configure-environment` | `message` | |
 | `translate` | `text` | `source_locale`, `target_locale` |
 
 ### Success
@@ -135,7 +146,7 @@ Accepted only when:
 1. `X-Organisation-Id` is listed in manifest `config.system_prompt_override_orgs`, and
 2. The override length is within `config.max_system_prompt_chars` (default `4000` runes).
 
-When authorized, the gateway does not use built-in prompts and does not enforce the default result shapes. `content` is still a JSON string of the model’s JSON object.
+When authorized, the gateway does not use the manifest-configured prompt and does not enforce the default result shapes. `content` is still a JSON string of the model’s JSON object.
 
 ## Priority and concurrency
 

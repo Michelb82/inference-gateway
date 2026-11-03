@@ -20,27 +20,9 @@ const (
 
 // Known returns the gateway's built-in capability ids in stable order.
 // This is the single source of truth for which capabilities exist; the
-// manifest only supplies model/ingress bindings for these names.
+// manifest supplies endpoint bindings, system prompts, and input limits for these names.
 func Known() []string {
 	return []string{Routing, IntentClassification, ParameterExtraction, PersonalDetails, Translate, ConfigureEnvironment}
-}
-
-// DefaultMaxInputChars returns the built-in input character limit for a
-// known capability when the manifest omits max_input_chars on rank 0.
-// Returns 0 for unknown names.
-func DefaultMaxInputChars(name string) int {
-	switch name {
-	case Routing:
-		return 200
-	case IntentClassification:
-		return 8000
-	case ParameterExtraction, PersonalDetails, ConfigureEnvironment:
-		return 16000
-	case Translate:
-		return 16000
-	default:
-		return 0
-	}
 }
 
 // IsKnown reports whether name is exactly a built-in capability id.
@@ -72,19 +54,11 @@ type ModelBinding struct {
 	Model         string
 	KeepAlive     string
 	MaxInputChars int
+	SystemPrompt  string
 }
 
 type Registry struct {
 	defs map[string]Definition
-}
-
-var knownSystemPrompts = map[string]string{
-	Routing:              routingSystemPrompt,
-	IntentClassification: intentSystemPrompt,
-	ParameterExtraction:  genericJSONSystemPrompt,
-	PersonalDetails:      genericJSONSystemPrompt,
-	Translate:            translateSystemPrompt,
-	ConfigureEnvironment: genericJSONSystemPrompt,
 }
 
 // NewRegistryFromBindings builds a registry from capability→model bindings.
@@ -100,8 +74,8 @@ func NewRegistryFromBindings(bindings map[string]ModelBinding) (*Registry, error
 		if !ok {
 			return nil, fmt.Errorf("missing binding for capability %s", name)
 		}
-		prompt, ok := knownSystemPrompts[name]
-		if !ok || strings.TrimSpace(prompt) == "" {
+		prompt := strings.TrimSpace(binding.SystemPrompt)
+		if prompt == "" {
 			return nil, fmt.Errorf("missing system prompt for capability %s", name)
 		}
 		defs[name] = Definition{
@@ -264,7 +238,10 @@ func BuildPrompts(def Definition, input map[string]any) (systemPrompt, userPromp
 		if targetLocale == "" {
 			targetLocale = "en"
 		}
-		systemPrompt := fmt.Sprintf(def.SystemPrompt, localeLabel(sourceLocale), localeLabel(targetLocale))
+		systemPrompt := strings.NewReplacer(
+			"{source_locale}", localeLabel(sourceLocale),
+			"{target_locale}", localeLabel(targetLocale),
+		).Replace(def.SystemPrompt)
 		return systemPrompt, text, nil
 	default:
 		return "", "", fmt.Errorf("unknown capability: %s", def.Name)
@@ -388,26 +365,3 @@ func localeLabel(locale string) string {
 		return locale
 	}
 }
-
-const routingSystemPrompt = `You are a routing model for a construction platform AI gateway.
-Given a user message, choose the single best next AI capability.
-Respond with ONLY valid JSON in this exact shape:
-{"capability":"<capability-name>"}
-Allowed capability values: intent-classification, translate.
-Do not include markdown, explanation, or extra fields.`
-
-const intentSystemPrompt = `You are an intent classification model for a construction services platform.
-Given a user message, determine the user's intent and a confidence score between 0 and 1.
-Respond with ONLY valid JSON in this exact shape:
-{"intent":"<intent-slug>","confidence":0.0}
-Use lowercase kebab-case for intent (for example wall-painting, bathroom-renovation).
-Do not include markdown, explanation, or extra fields.`
-
-const genericJSONSystemPrompt = `You are an AI assistant for a construction services platform.
-Follow the user request and respond with ONLY one valid JSON object.
-Do not include markdown or explanation.`
-
-const translateSystemPrompt = `You are a professional translator for a construction services website. Translate the following service description from %s to %s.
-Respond with ONLY valid JSON in this exact shape:
-{"text":"<translated text>"}
-Return the translated text with no quotes inside the value beyond normal punctuation, and no markdown or explanation.`

@@ -166,6 +166,7 @@ func TestApplyContinuesWhenOpenAIAdapterDisabled(t *testing.T) {
 	t.Cleanup(plane.Stop)
 
 	ollamaBinding := configmgmt.ModelBinding{
+		SystemPrompt:  "Test prompt from {source_locale} to {target_locale}.",
 		Vendor:        inference.VendorOllama,
 		BaseURL:       ollamaSrv.URL,
 		Model:         "local:latest",
@@ -173,6 +174,7 @@ func TestApplyContinuesWhenOpenAIAdapterDisabled(t *testing.T) {
 		MaxInputChars: 1000,
 	}
 	openaiBinding := configmgmt.ModelBinding{
+		SystemPrompt:  "Test prompt from {source_locale} to {target_locale}.",
 		Vendor:        inference.VendorOpenAI,
 		BaseURL:       "https://api.openai.com",
 		Model:         "gpt-4o-mini",
@@ -237,6 +239,7 @@ func TestApplySucceedsWhenOpenAICatalogOmitsNamedModel(t *testing.T) {
 	t.Cleanup(plane.Stop)
 
 	openaiBinding := configmgmt.ModelBinding{
+		SystemPrompt:  "Test prompt from {source_locale} to {target_locale}.",
 		Vendor:        inference.VendorOpenAI,
 		BaseURL:       openaiSrv.URL,
 		Model:         "gpt-4o-mini",
@@ -294,6 +297,7 @@ func TestApplyOpenAIOnlyDoesNotRequireOllama(t *testing.T) {
 	t.Cleanup(plane.Stop)
 
 	openaiBinding := configmgmt.ModelBinding{
+		SystemPrompt:  "Test prompt from {source_locale} to {target_locale}.",
 		Vendor:        inference.VendorOpenAI,
 		BaseURL:       openaiSrv.URL,
 		Model:         "",
@@ -328,6 +332,7 @@ func TestApplyOpenAIOnlyDoesNotRequireOllama(t *testing.T) {
 
 func testSnapshot(redisAddr, llmURL, model, fingerprint, prefix string) configmgmt.Snapshot {
 	binding := configmgmt.ModelBinding{
+		SystemPrompt:  "Test prompt from {source_locale} to {target_locale}.",
 		Vendor:        inference.VendorOllama,
 		BaseURL:       llmURL,
 		Model:         model,
@@ -352,5 +357,39 @@ func testSnapshot(redisAddr, llmURL, model, fingerprint, prefix string) configmg
 			capability.Translate:            binding,
 			capability.ConfigureEnvironment: binding,
 		},
+	}
+}
+
+func TestApplyReloadsManifestPromptWithoutRestartingQueue(t *testing.T) {
+	t.Cleanup(func() { cloudevent.ConfigureTypes(cloudevent.DefaultTypePrefix) })
+	mr := miniredis.RunT(t)
+	llm := httptest.NewServer(ollamaReadyHandler("test"))
+	t.Cleanup(llm.Close)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	holder := capability.NewHolder()
+	plane := &dataPlane{parent: ctx, registry: holder, overridePolicy: capability.NewOverridePolicyHolder(), llmPool: inference.NewRouter(""), logger: slog.Default()}
+	t.Cleanup(plane.Stop)
+	snap := testSnapshot(mr.Addr(), llm.URL, "test", "before", "com.mywebsite.ai")
+	if err := plane.Apply(snap, true); err != nil {
+		t.Fatal(err)
+	}
+	before := plane.InferenceQueue()
+	binding := snap.Bindings[capability.Routing]
+	binding.SystemPrompt = "Updated manifest prompt."
+	snap.Bindings[capability.Routing] = binding
+	snap.Fingerprint = "after"
+	if err := plane.Apply(snap, false); err != nil {
+		t.Fatal(err)
+	}
+	def, err := holder.Get(capability.Routing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if def.SystemPrompt != binding.SystemPrompt {
+		t.Fatalf("prompt = %q", def.SystemPrompt)
+	}
+	if plane.InferenceQueue() != before {
+		t.Fatal("prompt-only edit replaced the queue")
 	}
 }

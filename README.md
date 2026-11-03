@@ -43,7 +43,7 @@ Optional extra field `priority` on each request selects a processing lane: `CRIT
 
 ### Configuration management
 
-Runtime configuration (inference endpoints, capability→endpoint bindings, input character limits, Redis **internal** queue, CloudEvent prefix, priority fairness) comes from a **manifest**, not from `.env` (except `OPENAI_BEARER_TOKEN`). The manifest is an ops/bindings document: capability prompts, I/O shapes, and parsers live in gateway code (`internal/capability`). `capability_models` must bind exactly the built-in capability ids.
+Runtime configuration (inference endpoints, capability→endpoint bindings, input character limits, Redis **internal** queue, CloudEvent prefix, priority fairness) comes from a **manifest**, not from `.env` (except `OPENAI_BEARER_TOKEN`). The manifest is an ops/bindings document: capability system prompts and input limits come from `capability_models`; capability IDs, I/O shapes, and result parsers live in gateway code (`internal/capability`). `capability_models` must bind exactly the built-in capability ids.
 
 - **Primary path:** poll `MANIFEST_URL` every `MANIFEST_POLLING_INTERVAL`. Until a valid manifest is applied, the gateway stays **dormant** (process up, health reports `dormant`, OpenAI endpoints return 503, no Redis consumer / capability work).
 - **Optional local file:** `--manifest /path/to/manifest.json` is for development, tests, or experimental setups only. It is **not** required to boot. If the flag is set, the file must be valid or startup exits.
@@ -59,7 +59,7 @@ These endpoints are for Inference Service Manager on a trusted Docker network. D
 
 Compose for local/dev mounts `manifest.json` and passes `--manifest` so the stack works without AI Manager. Production-oriented runs can omit that flag and wait for the manager.
 
-For planned control-plane / data-plane separation (Ingress, Orchestration, Policy, Service Manager), see [docs/future-architecture.md](docs/future-architecture.md). That document also describes how this gateway’s OpenAI HTTP producer contract relates to those later layers. Redis remains an internal work queue, not a future producer adapter.
+Redis remains an internal work queue; producers use the OpenAI-compatible HTTP API.
 
 ## Prerequisites
 
@@ -140,17 +140,32 @@ Example catalog entries:
 
 ### Manifest (`manifest.json`)
 
-Copy `manifest.json.dist` to `manifest.json` for local/dev. Its defaults match the sibling construction stack (`foundation-model`, Redis, and `com.buildright.ai`) and require no tool or Loki service. The OpenAI catalog entry remains a disabled fallback until a capability uses it at rank 0 and `OPENAI_BEARER_TOKEN` is set.
+Copy `manifest.json.dist` to `manifest.json` for local/dev. Its defaults match the sibling construction stack (`foundation-model`, Redis, and `com.buildright.ai`) and require no tool or Loki service. The sample includes all six required capabilities with a required rank-0 binding each and optional higher ranks. Every ranked binding explicitly defines its mandatory `max_input_chars`. The OpenAI catalog entry is unused until a capability references it at rank 0 and `OPENAI_BEARER_TOKEN` is set.
 
 | Field | Purpose |
 |-------|---------|
 | `inference_endpoint` | Catalog entries with `id`, required `vendor` (`ollama` or `openai`), `url` (base URL), `model` (runtime model name; required for Ollama, nullable for OpenAI), `keep_alive_seconds` (required for Ollama; optional for OpenAI) |
-| `capability_models` | Bindings for each built-in capability: ranked list of catalog `id`s (rank `0` is used today; higher ranks are reserved for failover). Optional `max_input_chars` on rank `0` (defaults: routing `200`, intent-classification `8000`, all other capabilities `16000`). Unknown capability keys are rejected. |
+| `capability_models` | Bindings for each built-in capability: ranked list of catalog `id`s (rank `0` is used today; higher ranks are reserved for failover). Every ranked entry requires integer `max_input_chars` from `200` through `500000` inclusive; there are no defaults. Every entry also requires a nonblank `system_prompt`. Unknown capability keys are rejected. |
 | `tools` | Optional trusted tool catalog. Each entry requires a unique `name`, absolute HTTP(S) `endpoint`, and `instruction`. Requests select only by name; callers and model output cannot supply or override endpoints/instructions. |
 | `ingress` | Internal Redis work queue: adapter, address, ingress/egress channels, BRPOP timeout. Not the producer contract. |
 | `config` | Internal CloudEvent `message_prefix`, `http_address`, priority fairness counts, prompt controls, and optional `loki_endpoint`. Loki is disabled when blank and enabled only after `{endpoint}/ready` succeeds. |
 
-Example (trimmed; `manifest.json.dist` also catalogs the larger Ollama models):
+All six keys are required in `capability_models`, even when your application calls only one capability:
+
+| Required capability | Sample `max_input_chars` |
+|---------------------|---------------------------|
+| `routing` | 200 |
+| `intent-classification` | 8000 |
+| `parameter-extraction` | 16000 |
+| `personal-details-extraction` | 16000 |
+| `translate` | 16000 |
+| `configure-environment` | 16000 |
+
+Each key needs a nonempty list containing `rank: 0`. Every entry, including optional higher ranks, must include integer `max_input_chars` between `200` and `500000` inclusive. Missing or null values fail with `capability <id> has not defined max_input_chars please see documentation`. Zero, negative, and out-of-range values are rejected; strings and fractional numbers are invalid JSON field types. These limits are chosen in the manifest, with no built-in defaults. The binding's `model` references an `inference_endpoint[].id`, rather than the runtime model name in that endpoint's `model` field. All six capabilities may reference the same endpoint. Unknown capability keys, missing endpoint IDs, and duplicate ranks within a capability are rejected. Higher ranks are optional and currently do not provide automatic failover.
+
+Existing manifests must add both `max_input_chars` and a nonblank `system_prompt` to every ranked entry before upgrading. An invalid local manifest stops startup; an invalid remote update is rejected and the current snapshot is retained. Management discovery (`GET /management/v1/manifest-support`) now reports `max_input_chars_required: true`, `min_input_chars: 200`, and `max_input_chars: 500000` for each capability instead of `default_max_input_chars`, plus `system_prompt_required: true`.
+
+Complete sample (`manifest.json.dist`; replace endpoint URLs for your environment):
 
 ```json
 {
@@ -158,9 +173,23 @@ Example (trimmed; `manifest.json.dist` also catalogs the larger Ollama models):
     {
       "id": "qwen3:1.7b",
       "vendor": "ollama",
-      "url": "http://llm-model:11434",
+      "url": "http://foundation-model:11434",
       "model": "qwen3:1.7b-q4_K_M",
       "keep_alive_seconds": 300
+    },
+    {
+      "id": "qwen3:4b",
+      "vendor": "ollama",
+      "url": "http://foundation-model:11434",
+      "model": "qwen3:4b-q4_K_M",
+      "keep_alive_seconds": 300
+    },
+    {
+      "id": "qwen3:14b",
+      "vendor": "ollama",
+      "url": "http://foundation-model:11434",
+      "model": "qwen3:14b-q4_K_M",
+      "keep_alive_seconds": 120
     },
     {
       "id": "openai",
@@ -172,11 +201,133 @@ Example (trimmed; `manifest.json.dist` also catalogs the larger Ollama models):
   ],
   "capability_models": {
     "routing": [
-      {"rank": 0, "model": "qwen3:1.7b", "max_input_chars": 200},
-      {"rank": 1, "model": "qwen3:4b"},
-      {"rank": 2, "model": "openai"}
+      {
+        "rank": 0,
+        "model": "qwen3:1.7b",
+        "max_input_chars": 200,
+        "system_prompt": "You are a routing model for a construction platform AI gateway.\nGiven a user message, choose the single best next AI capability.\nRespond with ONLY valid JSON in this exact shape:\n{\"capability\":\"<capability-name>\"}\nAllowed capability values: intent-classification, translate.\nDo not include markdown, explanation, or extra fields."
+      },
+      {
+        "rank": 1,
+        "model": "qwen3:4b",
+        "max_input_chars": 200,
+        "system_prompt": "You are a routing model for a construction platform AI gateway.\nGiven a user message, choose the single best next AI capability.\nRespond with ONLY valid JSON in this exact shape:\n{\"capability\":\"<capability-name>\"}\nAllowed capability values: intent-classification, translate.\nDo not include markdown, explanation, or extra fields."
+      },
+      {
+        "rank": 2,
+        "model": "openai",
+        "max_input_chars": 200,
+        "system_prompt": "You are a routing model for a construction platform AI gateway.\nGiven a user message, choose the single best next AI capability.\nRespond with ONLY valid JSON in this exact shape:\n{\"capability\":\"<capability-name>\"}\nAllowed capability values: intent-classification, translate.\nDo not include markdown, explanation, or extra fields."
+      }
+    ],
+    "intent-classification": [
+      {
+        "rank": 0,
+        "model": "qwen3:4b",
+        "max_input_chars": 8000,
+        "system_prompt": "You are an intent classification model for a construction services platform.\nGiven a user message, determine the user's intent and a confidence score between 0 and 1.\nRespond with ONLY valid JSON in this exact shape:\n{\"intent\":\"<intent-slug>\",\"confidence\":0.0}\nUse lowercase kebab-case for intent (for example wall-painting, bathroom-renovation).\nDo not include markdown, explanation, or extra fields."
+      },
+      {
+        "rank": 1,
+        "model": "qwen3:14b",
+        "max_input_chars": 8000,
+        "system_prompt": "You are an intent classification model for a construction services platform.\nGiven a user message, determine the user's intent and a confidence score between 0 and 1.\nRespond with ONLY valid JSON in this exact shape:\n{\"intent\":\"<intent-slug>\",\"confidence\":0.0}\nUse lowercase kebab-case for intent (for example wall-painting, bathroom-renovation).\nDo not include markdown, explanation, or extra fields."
+      },
+      {
+        "rank": 2,
+        "model": "qwen3:1.7b",
+        "max_input_chars": 8000,
+        "system_prompt": "You are an intent classification model for a construction services platform.\nGiven a user message, determine the user's intent and a confidence score between 0 and 1.\nRespond with ONLY valid JSON in this exact shape:\n{\"intent\":\"<intent-slug>\",\"confidence\":0.0}\nUse lowercase kebab-case for intent (for example wall-painting, bathroom-renovation).\nDo not include markdown, explanation, or extra fields."
+      },
+      {
+        "rank": 3,
+        "model": "openai",
+        "max_input_chars": 8000,
+        "system_prompt": "You are an intent classification model for a construction services platform.\nGiven a user message, determine the user's intent and a confidence score between 0 and 1.\nRespond with ONLY valid JSON in this exact shape:\n{\"intent\":\"<intent-slug>\",\"confidence\":0.0}\nUse lowercase kebab-case for intent (for example wall-painting, bathroom-renovation).\nDo not include markdown, explanation, or extra fields."
+      }
+    ],
+    "parameter-extraction": [
+      {
+        "rank": 0,
+        "model": "qwen3:14b",
+        "max_input_chars": 16000,
+        "system_prompt": "You are an AI assistant for a construction services platform.\nFollow the user request and respond with ONLY one valid JSON object.\nDo not include markdown or explanation."
+      },
+      {
+        "rank": 1,
+        "model": "qwen3:4b",
+        "max_input_chars": 200,
+        "system_prompt": "You are an AI assistant for a construction services platform.\nFollow the user request and respond with ONLY one valid JSON object.\nDo not include markdown or explanation."
+      },
+      {
+        "rank": 2,
+        "model": "openai",
+        "max_input_chars": 200,
+        "system_prompt": "You are an AI assistant for a construction services platform.\nFollow the user request and respond with ONLY one valid JSON object.\nDo not include markdown or explanation."
+      }
+    ],
+    "personal-details-extraction": [
+      {
+        "rank": 0,
+        "model": "qwen3:14b",
+        "max_input_chars": 16000,
+        "system_prompt": "You are an AI assistant for a construction services platform.\nFollow the user request and respond with ONLY one valid JSON object.\nDo not include markdown or explanation."
+      },
+      {
+        "rank": 1,
+        "model": "qwen3:4b",
+        "max_input_chars": 200,
+        "system_prompt": "You are an AI assistant for a construction services platform.\nFollow the user request and respond with ONLY one valid JSON object.\nDo not include markdown or explanation."
+      },
+      {
+        "rank": 2,
+        "model": "openai",
+        "max_input_chars": 200,
+        "system_prompt": "You are an AI assistant for a construction services platform.\nFollow the user request and respond with ONLY one valid JSON object.\nDo not include markdown or explanation."
+      }
+    ],
+    "translate": [
+      {
+        "rank": 0,
+        "model": "qwen3:14b",
+        "max_input_chars": 16000,
+        "system_prompt": "You are a professional translator for a construction services website. Translate the following service description from {source_locale} to {target_locale}.\nRespond with ONLY valid JSON in this exact shape:\n{\"text\":\"<translated text>\"}\nReturn the translated text with no quotes inside the value beyond normal punctuation, and no markdown or explanation."
+      },
+      {
+        "rank": 1,
+        "model": "qwen3:4b",
+        "max_input_chars": 200,
+        "system_prompt": "You are a professional translator for a construction services website. Translate the following service description from {source_locale} to {target_locale}.\nRespond with ONLY valid JSON in this exact shape:\n{\"text\":\"<translated text>\"}\nReturn the translated text with no quotes inside the value beyond normal punctuation, and no markdown or explanation."
+      },
+      {
+        "rank": 2,
+        "model": "openai",
+        "max_input_chars": 200,
+        "system_prompt": "You are a professional translator for a construction services website. Translate the following service description from {source_locale} to {target_locale}.\nRespond with ONLY valid JSON in this exact shape:\n{\"text\":\"<translated text>\"}\nReturn the translated text with no quotes inside the value beyond normal punctuation, and no markdown or explanation."
+      }
+    ],
+    "configure-environment": [
+      {
+        "rank": 0,
+        "model": "qwen3:14b",
+        "max_input_chars": 16000,
+        "system_prompt": "You are an AI assistant for a construction services platform.\nFollow the user request and respond with ONLY one valid JSON object.\nDo not include markdown or explanation."
+      },
+      {
+        "rank": 1,
+        "model": "qwen3:4b",
+        "max_input_chars": 200,
+        "system_prompt": "You are an AI assistant for a construction services platform.\nFollow the user request and respond with ONLY one valid JSON object.\nDo not include markdown or explanation."
+      },
+      {
+        "rank": 2,
+        "model": "openai",
+        "max_input_chars": 200,
+        "system_prompt": "You are an AI assistant for a construction services platform.\nFollow the user request and respond with ONLY one valid JSON object.\nDo not include markdown or explanation."
+      }
     ]
   },
+  "tools": [],
   "ingress": {
     "adapter": "redis",
     "address": "redis:6379",
@@ -185,13 +336,35 @@ Example (trimmed; `manifest.json.dist` also catalogs the larger Ollama models):
     "brpop_timeout_seconds": 5
   },
   "config": {
-    "message_prefix": "com.mywebsite.ai",
+    "message_prefix": "com.buildright.ai",
     "http_address": ":80",
     "priority_count_high": 3,
     "priority_count_medium": 3,
     "max_system_prompt_chars": 4000,
-    "system_prompt_override_orgs": []
+    "system_prompt_override_orgs": [],
+    "loki_endpoint": ""
   }
+}
+```
+
+### Capability system prompts
+
+Every ranked binding requires a nonblank `system_prompt`; missing, null, empty, or whitespace-only values are rejected. The rank-0 prompt is active. Prompt edits are included in the configuration fingerprint and take effect when the manifest is applied, without rebuilding the gateway. No capability prompt is compiled into the application.
+
+For translation, `{source_locale}` and `{target_locale}` placeholders are replaced with language names (for example Dutch and English). Other prompt text, including percent signs, is preserved. Authorized caller system messages replace the configured prompt verbatim and are not expanded as templates.
+
+Result validation remains capability-specific: routing requires `capability`, intent-classification requires `intent` and `confidence`, translate requires `text`, and the other three accept a nonempty JSON object. Configure prompts to produce those shapes. `config.max_system_prompt_chars` controls caller overrides; it does not cap trusted manifest prompts.
+
+For an OpenAI-only setup, set the `openai` endpoint's `url` to your provider's base URL and its `model` to the provider's runtime model name (or `null` if the provider selects it). Set `OPENAI_BEARER_TOKEN` in `.env`, then use these bindings:
+
+```json
+"capability_models": {
+  "routing": [{"rank": 0, "model": "openai", "max_input_chars": 200, "system_prompt": "Respond with one JSON object matching this capability result schema."}],
+  "intent-classification": [{"rank": 0, "model": "openai", "max_input_chars": 8000, "system_prompt": "Respond with one JSON object matching this capability result schema."}],
+  "parameter-extraction": [{"rank": 0, "model": "openai", "max_input_chars": 16000, "system_prompt": "Respond with one JSON object matching this capability result schema."}],
+  "personal-details-extraction": [{"rank": 0, "model": "openai", "max_input_chars": 16000, "system_prompt": "Respond with one JSON object matching this capability result schema."}],
+  "translate": [{"rank": 0, "model": "openai", "max_input_chars": 16000, "system_prompt": "Respond with one JSON object matching this capability result schema."}],
+  "configure-environment": [{"rank": 0, "model": "openai", "max_input_chars": 16000, "system_prompt": "Respond with one JSON object matching this capability result schema."}]
 }
 ```
 
@@ -265,7 +438,7 @@ Unauthorized or oversized overrides fail the HTTP request. Empty allowlist means
 
 When an override is authorized:
 
-1. The built-in gateway system prompts are **not** used.
+1. The manifest-configured system prompt is **not** used.
 2. The value is sent to the LLM as `messages[]` with `role: "system"` (alongside the user message/text as `role: "user"`).
 3. Result parsing is relaxed: the model’s JSON object is returned as `content` **as-is**, without enforcing the default capability result shapes above. Callers that override the system prompt own the response schema.
 
@@ -287,7 +460,7 @@ Example (organisation `7` must be in `system_prompt_override_orgs`):
 }
 ```
 
-Without a system message, the gateway uses its default system prompts and validates the default result shapes in the table above.
+Without a system message, the gateway uses the manifest-configured system prompt and validates the default result shapes in the table above.
 
 Translate example:
 

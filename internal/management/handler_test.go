@@ -59,3 +59,20 @@ func TestManagementMethodsAndLimit(t *testing.T) {
 		t.Fatalf("oversized status = %d", rec.Code)
 	}
 }
+
+func TestSupportAdvertisesRequiredInputLimits(t *testing.T) {
+	rec := httptest.NewRecorder()
+	testMux().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/management/v1/manifest-support", nil))
+	var body supportResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	for _, capability := range body.Capabilities {
+		if !capability.SystemPromptRequired || !capability.MaxInputCharsRequired || capability.MinInputChars != 200 || capability.MaxInputChars != 500000 {
+			t.Fatalf("unexpected input limit support: %+v", capability)
+		}
+	}
+	if bytes.Contains(rec.Body.Bytes(), []byte("default_max_input_chars")) {
+		t.Fatal("support must not advertise removed defaults")
+	}
+}

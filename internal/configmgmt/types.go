@@ -1,9 +1,8 @@
 package configmgmt
 
 // Manifest is the ops/bindings document supplied locally or by AI Manager.
-// Capability semantics (prompts, I/O shapes, parsers) live in the gateway's
-// capability package; this document only catalogs inference endpoints and
-// binds them to those known capability ids via capability_models.
+// Capability IDs, input shapes, and result parsers live in the capability package.
+// This document supplies inference endpoints, system prompts, and input limits.
 type Manifest struct {
 	InferenceEndpoint []Endpoint                  `json:"inference_endpoint"`
 	CapabilityModels  map[string][]RankedModelRef `json:"capability_models"`
@@ -29,7 +28,8 @@ type Endpoint struct {
 type RankedModelRef struct {
 	Rank          int    `json:"rank"`
 	Model         string `json:"model"`
-	MaxInputChars int    `json:"max_input_chars,omitempty"`
+	MaxInputChars int    `json:"max_input_chars"`
+	SystemPrompt  string `json:"system_prompt"`
 }
 
 // Ingress is the internal Redis work queue (not the producer contract).
@@ -59,6 +59,7 @@ type ModelBinding struct {
 	Model         string
 	KeepAlive     string
 	MaxInputChars int
+	SystemPrompt  string
 }
 
 // Snapshot is the resolved runtime configuration applied to the data plane.

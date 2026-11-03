@@ -19,9 +19,9 @@ import (
 
 func testRegistry() *capability.Registry {
 	return capability.NewRegistry(
-		capability.ModelBinding{BaseURL: "http://llm-model:11434", Model: "qwen3:1.7b-q4_K_M", KeepAlive: "5m", MaxInputChars: 200},
-		capability.ModelBinding{BaseURL: "http://llm-model:11434", Model: "qwen3:4b-q4_K_M", KeepAlive: "5m", MaxInputChars: 8000},
-		capability.ModelBinding{BaseURL: "http://llm-model:11434", Model: "qwen3:14b-q4_K_M", KeepAlive: "2m", MaxInputChars: 16000},
+		capability.ModelBinding{SystemPrompt: "Test prompt from {source_locale} to {target_locale}.", BaseURL: "http://llm-model:11434", Model: "qwen3:1.7b-q4_K_M", KeepAlive: "5m", MaxInputChars: 200},
+		capability.ModelBinding{SystemPrompt: "Test prompt from {source_locale} to {target_locale}.", BaseURL: "http://llm-model:11434", Model: "qwen3:4b-q4_K_M", KeepAlive: "5m", MaxInputChars: 8000},
+		capability.ModelBinding{SystemPrompt: "Test prompt from {source_locale} to {target_locale}.", BaseURL: "http://llm-model:11434", Model: "qwen3:14b-q4_K_M", KeepAlive: "2m", MaxInputChars: 16000},
 	)
 }
 
@@ -84,6 +84,7 @@ func TestHandleCompleteDoesNotListModels(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	binding := capability.ModelBinding{
+		SystemPrompt:  "Test prompt from {source_locale} to {target_locale}.",
 		Vendor:        "openai",
 		BaseURL:       server.URL,
 		Model:         "gpt-4o-mini",
@@ -355,8 +356,8 @@ func TestHandleAllowlistedOrgWithoutSystemPromptUsesCapabilitySchema(t *testing.
 	if publisher.events[0].Type != cloudevent.EventTypeRequestCompleted {
 		t.Fatalf("Type = %q", publisher.events[0].Type)
 	}
-	if !strings.Contains(ollama.systemPrompt, "routing model") {
-		t.Fatalf("expected builtin routing system prompt, got %q", ollama.systemPrompt)
+	if ollama.systemPrompt != "Test prompt from {source_locale} to {target_locale}." {
+		t.Fatalf("expected configured routing system prompt, got %q", ollama.systemPrompt)
 	}
 	result := publisher.events[0].Data["result"].(map[string]any)
 	if result["capability"] != "intent-classification" {

@@ -156,6 +156,7 @@ func (d *dataPlane) Apply(snap configmgmt.Snapshot, first bool) error {
 			Model:         binding.Model,
 			KeepAlive:     binding.KeepAlive,
 			MaxInputChars: binding.MaxInputChars,
+			SystemPrompt:  binding.SystemPrompt,
 		}
 	}
 	reg, err := capability.NewRegistryFromBindings(bindings)

@@ -14,7 +14,7 @@ type OverridePolicy struct {
 	MaxSystemPromptChars int
 }
 
-// Allows reports whether orgID may override the built-in system prompt.
+// Allows reports whether orgID may override the manifest-configured system prompt.
 func (p OverridePolicy) Allows(orgID string) bool {
 	if p.AllowedOrgs == nil {
 		return false

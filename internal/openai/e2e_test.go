@@ -153,9 +153,9 @@ func newE2E(t *testing.T, byPrompt map[string]string) (*http.ServeMux, *e2eOllam
 	}
 
 	reg := capability.NewRegistry(
-		capability.ModelBinding{BaseURL: "http://llm-model:11434", Model: "qwen3:1.7b-q4_K_M", KeepAlive: "5m", MaxInputChars: 200},
-		capability.ModelBinding{BaseURL: "http://llm-model:11434", Model: "qwen3:4b-q4_K_M", KeepAlive: "5m", MaxInputChars: 8000},
-		capability.ModelBinding{BaseURL: "http://llm-model:11434", Model: "qwen3:14b-q4_K_M", KeepAlive: "2m", MaxInputChars: 16000},
+		capability.ModelBinding{SystemPrompt: "Test prompt from {source_locale} to {target_locale}.", BaseURL: "http://llm-model:11434", Model: "qwen3:1.7b-q4_K_M", KeepAlive: "5m", MaxInputChars: 200},
+		capability.ModelBinding{SystemPrompt: "Test prompt from {source_locale} to {target_locale}.", BaseURL: "http://llm-model:11434", Model: "qwen3:4b-q4_K_M", KeepAlive: "5m", MaxInputChars: 8000},
+		capability.ModelBinding{SystemPrompt: "Test prompt from {source_locale} to {target_locale}.", BaseURL: "http://llm-model:11434", Model: "qwen3:14b-q4_K_M", KeepAlive: "2m", MaxInputChars: 16000},
 	)
 
 	ctx, cancel := context.WithCancel(context.Background())

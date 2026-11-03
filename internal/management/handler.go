@@ -17,8 +17,11 @@ const (
 )
 
 type capabilitySupport struct {
-	ID                   string `json:"id"`
-	DefaultMaxInputChars int    `json:"default_max_input_chars"`
+	ID                    string `json:"id"`
+	MinInputChars         int    `json:"min_input_chars"`
+	MaxInputChars         int    `json:"max_input_chars"`
+	MaxInputCharsRequired bool   `json:"max_input_chars_required"`
+	SystemPromptRequired  bool   `json:"system_prompt_required"`
 }
 
 type supportResponse struct {
@@ -51,7 +54,7 @@ func handleSupport(w http.ResponseWriter, r *http.Request) {
 
 	capabilities := make([]capabilitySupport, 0, len(capability.Known()))
 	for _, id := range capability.Known() {
-		capabilities = append(capabilities, capabilitySupport{ID: id, DefaultMaxInputChars: capability.DefaultMaxInputChars(id)})
+		capabilities = append(capabilities, capabilitySupport{ID: id, MinInputChars: configmgmt.MinInputChars, MaxInputChars: configmgmt.MaxInputChars, MaxInputCharsRequired: true, SystemPromptRequired: true})
 	}
 	writeJSON(w, http.StatusOK, supportResponse{
 		ContractVersion: ContractVersion, ManifestFormat: ManifestFormat,
