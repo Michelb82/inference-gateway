@@ -26,7 +26,7 @@ todos:
 isProject: false
 ---
 
-# AI Gateway — Dummy Container Setup
+# GW-18: AI Gateway Dummy Setup
 
 ## Context
 
@@ -139,7 +139,7 @@ construction-ai-gateway/
 ├── scripts/
 │   └── push-test-event.sh
 ├── feature/plan/
-│   └── ai_gateway_dummy_setup.md   # this file
+│   └── gw-18-ai-gateway-dummy-setup.md   # this file
 ├── Dockerfile
 ├── docker-compose.yml
 ├── Makefile
