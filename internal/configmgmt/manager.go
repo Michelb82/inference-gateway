@@ -2,12 +2,32 @@ package configmgmt
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
 )
+
+// InstanceIdentity identifies a process lifetime, not an authenticated identity.
+type InstanceIdentity struct {
+	ID       string
+	Hostname string
+}
+
+// NewInstanceIdentity creates an identifier once for a gateway process.
+func NewInstanceIdentity() (InstanceIdentity, error) {
+	var id [16]byte
+	if _, err := rand.Read(id[:]); err != nil {
+		return InstanceIdentity{}, fmt.Errorf("generate gateway instance ID: %w", err)
+	}
+	hostname, _ := os.Hostname()
+	return InstanceIdentity{ID: hex.EncodeToString(id[:]), Hostname: hostname}, nil
+}
 
 // ApplyFunc is invoked when a candidate snapshot should be activated.
 // first is true when no snapshot is currently applied.
@@ -21,12 +41,13 @@ type Manager struct {
 	client   *http.Client
 	logger   *slog.Logger
 	onApply  ApplyFunc
+	identity InstanceIdentity
 
 	mu      sync.RWMutex
 	current *Snapshot
 }
 
-func NewManager(url string, interval time.Duration, logger *slog.Logger, onApply ApplyFunc) *Manager {
+func NewManager(identity InstanceIdentity, url string, interval time.Duration, logger *slog.Logger, onApply ApplyFunc) *Manager {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -39,6 +60,7 @@ func NewManager(url string, interval time.Duration, logger *slog.Logger, onApply
 		client:   &http.Client{Timeout: defaultFetchTimeout},
 		logger:   logger,
 		onApply:  onApply,
+		identity: identity,
 	}
 }
 
@@ -105,7 +127,7 @@ func (m *Manager) pollOnce(ctx context.Context) {
 		return
 	}
 
-	manifest, err := FetchURL(ctx, m.client, m.url)
+	manifest, err := fetchURL(ctx, m.client, m.url, m.identity)
 	if err != nil {
 		if m.HasSnapshot() {
 			m.logger.Warn("manifest poll failed; keeping current snapshot", "url", m.url, "error", err)

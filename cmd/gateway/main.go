@@ -63,6 +63,11 @@ func main() {
 		defer debugFile.Close()
 	}
 	slog.SetDefault(logger)
+	identity, err := configmgmt.NewInstanceIdentity()
+	if err != nil {
+		logger.Error("failed to create gateway instance identity", "error", err)
+		os.Exit(1)
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -97,7 +102,7 @@ func main() {
 		}
 	}()
 
-	mgr := configmgmt.NewManager(cfg.ManifestURL, cfg.ManifestPollingInterval, logger, plane.Apply)
+	mgr := configmgmt.NewManager(identity, cfg.ManifestURL, cfg.ManifestPollingInterval, logger, plane.Apply)
 	if err := mgr.Bootstrap(*manifestPath); err != nil {
 		logger.Error("failed to bootstrap manifest", "error", err)
 		os.Exit(1)
@@ -106,6 +111,8 @@ func main() {
 	go mgr.Run(ctx)
 
 	logger.Info("ai gateway started",
+		"instance_id", identity.ID,
+		"hostname", identity.Hostname,
 		"manifest_path", *manifestPath,
 		"manifest_url", cfg.ManifestURL,
 		"manifest_polling_interval", cfg.ManifestPollingInterval.String(),

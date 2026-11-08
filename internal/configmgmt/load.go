@@ -35,6 +35,10 @@ func LoadFile(path string) (Manifest, error) {
 
 // FetchURL GETs a remote manifest, then parses and validates it.
 func FetchURL(ctx context.Context, client *http.Client, url string) (Manifest, error) {
+	return fetchURL(ctx, client, url, InstanceIdentity{})
+}
+
+func fetchURL(ctx context.Context, client *http.Client, url string, identity InstanceIdentity) (Manifest, error) {
 	if client == nil {
 		client = &http.Client{Timeout: defaultFetchTimeout}
 	}
@@ -42,6 +46,12 @@ func FetchURL(ctx context.Context, client *http.Client, url string) (Manifest, e
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return Manifest{}, fmt.Errorf("create manifest request: %w", err)
+	}
+	if identity.ID != "" {
+		req.Header.Set("X-Gateway-Instance-ID", identity.ID)
+	}
+	if identity.Hostname != "" {
+		req.Header.Set("X-Gateway-Hostname", identity.Hostname)
 	}
 
 	resp, err := client.Do(req)

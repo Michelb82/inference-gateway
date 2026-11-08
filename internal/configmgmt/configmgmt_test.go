@@ -814,7 +814,7 @@ func TestManagerBootstrapAndSoftFailPoll(t *testing.T) {
 	_ = os.WriteFile(path, data, 0o644)
 
 	var applies atomic.Int32
-	mgr := configmgmt.NewManager("http://127.0.0.1:1/missing", time.Hour, nil, func(snap configmgmt.Snapshot, first bool) error {
+	mgr := configmgmt.NewManager(configmgmt.InstanceIdentity{}, "http://127.0.0.1:1/missing", time.Hour, nil, func(snap configmgmt.Snapshot, first bool) error {
 		applies.Add(1)
 		if !first {
 			t.Errorf("bootstrap apply should report first=true")
@@ -850,7 +850,7 @@ func TestManagerBootstrapAndSoftFailPoll(t *testing.T) {
 func TestManagerBootstrapInvalidFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "bad.json")
 	_ = os.WriteFile(path, []byte(`{"inference_endpoint":[]}`), 0o644)
-	mgr := configmgmt.NewManager("http://example.invalid/manifest.json", time.Hour, nil, nil)
+	mgr := configmgmt.NewManager(configmgmt.InstanceIdentity{}, "http://example.invalid/manifest.json", time.Hour, nil, nil)
 	if err := mgr.Bootstrap(path); err == nil {
 		t.Fatalf("expected bootstrap error")
 	}
@@ -865,7 +865,7 @@ func TestManagerBootstrapApplyError(t *testing.T) {
 	data, _ := json.Marshal(validManifest())
 	_ = os.WriteFile(path, data, 0o644)
 
-	mgr := configmgmt.NewManager("http://example.invalid/manifest.json", time.Hour, nil, func(snap configmgmt.Snapshot, first bool) error {
+	mgr := configmgmt.NewManager(configmgmt.InstanceIdentity{}, "http://example.invalid/manifest.json", time.Hour, nil, func(snap configmgmt.Snapshot, first bool) error {
 		return context.DeadlineExceeded
 	})
 	if err := mgr.Bootstrap(path); err == nil {
@@ -885,7 +885,7 @@ func TestManagerDormantUntilRemote(t *testing.T) {
 
 	var applies atomic.Int32
 	var sawFirst atomic.Bool
-	mgr := configmgmt.NewManager(srv.URL, 50*time.Millisecond, nil, func(snap configmgmt.Snapshot, first bool) error {
+	mgr := configmgmt.NewManager(configmgmt.InstanceIdentity{}, srv.URL, 50*time.Millisecond, nil, func(snap configmgmt.Snapshot, first bool) error {
 		applies.Add(1)
 		if first {
 			sawFirst.Store(true)
@@ -912,7 +912,7 @@ func TestManagerDormantUntilRemote(t *testing.T) {
 }
 
 func TestManagerRemainsDormantOnPollFailure(t *testing.T) {
-	mgr := configmgmt.NewManager("http://127.0.0.1:1/missing", 20*time.Millisecond, nil, nil)
+	mgr := configmgmt.NewManager(configmgmt.InstanceIdentity{}, "http://127.0.0.1:1/missing", 20*time.Millisecond, nil, nil)
 	_ = mgr.Bootstrap("")
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Millisecond)
 	defer cancel()
@@ -938,7 +938,7 @@ func TestManagerPollReplacesChangedManifest(t *testing.T) {
 	defer srv.Close()
 
 	var applies atomic.Int32
-	mgr := configmgmt.NewManager(srv.URL, 30*time.Millisecond, nil, func(snap configmgmt.Snapshot, first bool) error {
+	mgr := configmgmt.NewManager(configmgmt.InstanceIdentity{}, srv.URL, 30*time.Millisecond, nil, func(snap configmgmt.Snapshot, first bool) error {
 		applies.Add(1)
 		return nil
 	})
@@ -976,7 +976,7 @@ func TestManagerUnchangedFingerprintDoesNotReapply(t *testing.T) {
 	defer srv.Close()
 
 	var applies atomic.Int32
-	mgr := configmgmt.NewManager(srv.URL, 20*time.Millisecond, nil, func(snap configmgmt.Snapshot, first bool) error {
+	mgr := configmgmt.NewManager(configmgmt.InstanceIdentity{}, srv.URL, 20*time.Millisecond, nil, func(snap configmgmt.Snapshot, first bool) error {
 		applies.Add(1)
 		return nil
 	})
@@ -1005,7 +1005,7 @@ func TestManagerPollApplyErrorKeepsPrevious(t *testing.T) {
 	defer srv.Close()
 
 	var remoteAttempts atomic.Int32
-	mgr := configmgmt.NewManager(srv.URL, 30*time.Millisecond, nil, func(snap configmgmt.Snapshot, first bool) error {
+	mgr := configmgmt.NewManager(configmgmt.InstanceIdentity{}, srv.URL, 30*time.Millisecond, nil, func(snap configmgmt.Snapshot, first bool) error {
 		if first {
 			return nil
 		}
@@ -1043,7 +1043,7 @@ func TestManagerPollInvalidBodyKeepsPrevious(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	mgr := configmgmt.NewManager(srv.URL, 30*time.Millisecond, nil, func(snap configmgmt.Snapshot, first bool) error {
+	mgr := configmgmt.NewManager(configmgmt.InstanceIdentity{}, srv.URL, 30*time.Millisecond, nil, func(snap configmgmt.Snapshot, first bool) error {
 		return nil
 	})
 	if err := mgr.Bootstrap(path); err != nil {
